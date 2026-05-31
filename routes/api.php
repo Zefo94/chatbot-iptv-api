@@ -29,5 +29,10 @@ return [
         '/api/recargar-creditos'  => ['App\Controllers\ResellerController', 'recargar'],
         '/api/historial-recargas' => ['App\Controllers\ResellerController', 'historial'],
         '/api/eliminar-revendedor'=> ['App\Controllers\ResellerController', 'eliminar'],
+    ],
+    'GET' => [
+        '/api/info'            => ['App\Controllers\ServerInfoController', 'info'],
+        '/api/listar-paquetes'=> ['App\Controllers\PanelController', 'listarPaquetes'],
+        '/api/consultar-pago' => ['App\Controllers\PaymentController', 'consultarPago'],
     ]
 ];
