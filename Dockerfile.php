@@ -7,6 +7,7 @@ RUN apk add --no-cache \
     mariadb-client \
     shadow \
     linux-headers \
+    libzip-dev \
     $PHPIZE_DEPS
 
 # Extensiones PHP necesarias
