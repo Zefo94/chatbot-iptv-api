@@ -1,0 +1,32 @@
+# Entorno y secrets
+.env
+.env.local
+.env.production
+
+# Dependencies
+/vendor/
+/node_modules/
+
+# Logs y cache
+/storage/logs/
+/storage/cache/
+*.log
+
+# Docker
+.docker/
+
+# Archivos grandes
+*.pdf
+*.html
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Archivos temporales
+*.tmp
+*.swp

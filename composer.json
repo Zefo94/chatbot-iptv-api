@@ -1,0 +1,20 @@
+{
+    "name": "personal/iptv-chatbot-middleware",
+    "description": "Pure PHP 8.2 Middleware between Chatbot and XUI.ONE IPTV Panel",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "require": {
+        "php": ">=8.2.0"
+    },
+    "authors": [
+        {
+            "name": "Senior Software Architect",
+            "email": "architect@example.com"
+        }
+    ]
+}
