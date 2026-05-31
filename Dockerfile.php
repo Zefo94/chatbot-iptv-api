@@ -10,7 +10,7 @@ RUN apk add --no-cache \
     $PHPIZE_DEPS
 
 # Extensiones PHP necesarias
-RUN docker-php-ext-install pdo pdo_mysql sockets opcache zipbcmath bcmath \
+RUN docker-php-ext-install pdo pdo_mysql sockets opcache zip bcmath \
     && docker-php-ext-enable pdo_mysql opcache
 
 # Composer
