@@ -55,7 +55,7 @@ services:
       - ./vendor:/var/www/html/vendor:ro
       - php_storage:/var/www/html/storage
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/ 2>/dev/null || echo OK"]
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep php-fpm || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
