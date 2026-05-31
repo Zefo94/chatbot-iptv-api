@@ -11,12 +11,6 @@ SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null \
   || hostname -I | awk '{print $1}' || echo "")
 SERVER_IP=$(echo "$SERVER_IP" | tr -d '[:space:]')
 
-echo "=========================================="
-echo "  Chatbot IPTV — Setup VPS"
-echo "=========================================="
-echo "  IP detectada: $SERVER_IP"
-echo "=========================================="
-
 # ── Colores ──────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[✓]${NC} $*"; }
@@ -25,11 +19,29 @@ fatal() { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+echo "=========================================="
+echo "  Chatbot IPTV — Setup VPS"
+echo "=========================================="
+echo "  IP detectada: $SERVER_IP"
+echo "=========================================="
+
+# ── Pedir dominio (opcional) ───────────────────────────────────
+read -p "Dominio (o ENTER para omitir): " DOMAIN_INPUT
+DOMAIN_INPUT=$(echo "$DOMAIN_INPUT" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+
+USE_SSL=0
+if [ -n "$DOMAIN_INPUT" ]; then
+    USE_SSL=1
+    info "Dominio: $DOMAIN_INPUT"
+    warn "Asegúrate de que el DNS ya apunta a $SERVER_IP antes de continuar."
+    read -p "Presiona ENTER cuando el DNS esté propagado para generar el SSL: " _
+fi
+
 # ── Permisos ───────────────────────────────────────────────────
 chmod +x setup.sh 2>/dev/null || true
 mkdir -p storage/logs storage/cache
 
-# ── 1. Generar secrets aleatorios ────────────────────────────────
+# ── 1. Generar secrets aleatorios ───────────────────────────────
 info "Generando secrets seguros..."
 DB_PASS=$(openssl rand -hex 20)
 MYSQL_ROOT_PASS=$(openssl rand -hex 20)
@@ -38,11 +50,16 @@ CHATBOT_KEY=$(openssl rand -hex 32)
 # ── 2. Crear .env si no existe ──────────────────────────────────
 if [ ! -f .env ]; then
     info "Creando archivo .env..."
+    if [ "$USE_SSL" = "1" ]; then
+        APP_URL="https://${DOMAIN_INPUT}"
+    else
+        APP_URL="http://${SERVER_IP}:8000"
+    fi
     cat > .env << EOF
 # ── App ─────────────────────────────────────────────────────────
 APP_ENV=production
 APP_DEBUG=false
-APP_URL=http://${SERVER_IP}:8000
+APP_URL=${APP_URL}
 
 # ── Seguridad ────────────────────────────────────────────────────
 CHATBOT_API_KEY=${CHATBOT_KEY}
@@ -84,23 +101,32 @@ PAYPAL_PRICE_PER_CREDIT=10.00
 BINANCE_API_KEY=
 BINANCE_SECRET_KEY=
 EOF
+    info ".env generado"
 else
-    # Si .env existe, asegurar que DB_PASS y CHATBOT_API_KEY estén generados
-    info "Actualizando .env con nuevos secrets..."
-    sed -i "s|^DB_PASS=.*|DB_PASS=${DB_PASS}|" .env
-    sed -i "s|^MYSQL_ROOT_PASSWORD=.*|MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASS}|" .env
-    sed -i "s|^CHATBOT_API_KEY=.*|CHATBOT_API_KEY=${CHATBOT_KEY}|" .env
-    sed -i "s|^DB_HOST=.*|DB_HOST=db|" .env
-    sed -i "s|^APP_URL=.*|APP_URL=http://${SERVER_IP}:8000|" .env
+    info ".env ya existe — omitiendo generación"
+    # Asegurar que DB_HOST sea 'db' aunque exista
+    sed -i 's|^DB_HOST=.*|DB_HOST=db|' .env
+    if [ "$USE_SSL" = "1" ]; then
+        sed -i "s|^APP_URL=.*|APP_URL=https://${DOMAIN_INPUT}|" .env
+    fi
 fi
 
-info ".env generado con IP=${SERVER_IP}"
+# ── 3. Docker compose: ajustar puerto según SSL ──────────────
+if [ "$USE_SSL" = "1" ]; then
+    # SSL → nginx en puerto 80, se creará cert después
+    info "Configurando nginx en puerto 80 para SSL..."
+    sed -i 's|8000:80|80:80|g' docker-compose.yml
+else
+    # Sin SSL → nginx en puerto 8000
+    info "Configurando nginx en puerto 8000..."
+    sed -i 's|80:80|8000:80|g' docker-compose.yml
+fi
 
-# ── 3. Construir e iniciar Docker ────────────────────────────────
-info "Construyendo contenedores (primera vez puede tardar 2-3 min)..."
+# ── 4. Construir e iniciar Docker ───────────────────────────────
+info "Construyendo contenedores..."
 docker compose up -d --build
 
-# ── 4. Esperar MySQL ────────────────────────────────────────────
+# ── 5. Esperar MySQL ───────────────────────────────────────────
 info "Esperando MySQL..."
 for i in $(seq 1 30); do
     if docker exec iptv_chatbot_db mysqladmin ping -h 127.0.0.1 --silent 2>/dev/null; then
@@ -111,7 +137,7 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# ── 5. Crear DB y usuario ───────────────────────────────────────
+# ── 6. Crear DB y usuario ──────────────────────────────────────
 info "Creando base de datos y permisos..."
 docker exec iptv_chatbot_db mysql -u root -p"${MYSQL_ROOT_PASS}" << 'EOSQL'
 CREATE DATABASE IF NOT EXISTS `iptv_manager`
@@ -122,50 +148,136 @@ GRANT ALL PRIVILEGES ON `iptv_manager`.* TO 'iptv_user'@'%';
 FLUSH PRIVILEGES;
 EOSQL
 
-# Actualizar el password real
 docker exec iptv_chatbot_db mysql -u root -p"${MYSQL_ROOT_PASS}" \
   -e "SET PASSWORD FOR 'iptv_user'@'%' = PASSWORD('${DB_PASS}'); FLUSH PRIVILEGES;"
 
-# ── 6. Importar schema ─────────────────────────────────────────
+# ── 7. Importar schema ─────────────────────────────────────────
 info "Importando esquema de base de datos..."
 docker exec -i iptv_chatbot_db mysql -u iptv_user -p"${DB_PASS}" iptv_manager < schema.sql
 info "Schema importado OK"
 
-# ── 7. Permisos storage ────────────────────────────────────────
+# ── 8. Permisos storage ────────────────────────────────────────
 docker exec iptv_chatbot_php sh -c "chown -R www-data:www-data /var/www/html/storage" 2>/dev/null || true
 
-# ── 8. Esperar PHP ─────────────────────────────────────────────
+# ── 9. Esperar PHP y Nginx ─────────────────────────────────────
 info "Esperando PHP..."
-sleep 3
+sleep 5
 
-# ── 9. Estado final ─────────────────────────────────────────────
+# ── 10. SSL con Certbot (si hay dominio) ──────────────────────
+if [ "$USE_SSL" = "1" ]; then
+    info "Generando certificado SSL para ${DOMAIN_INPUT}..."
+
+    # Instalar certbot si no existe
+    if ! command -v certbot &> /dev/null; then
+        warn "Instalando certbot..."
+        apt-get update -qq
+        apt-get install -y -qq certbot python3-certbot-nginx > /dev/null 2>&1
+    fi
+
+    # Detener nginx temporalmente para que certbot use el puerto 80
+    docker compose stop nginx
+
+    # Generar certificado (standalone = certbot responde el challenge HTTP)
+    if certbot certonly --standalone \
+        --non-interactive \
+        --agree-tos \
+        --email "admin@${DOMAIN_INPUT}" \
+        --domains "${DOMAIN_INPUT}" \
+        --pre-hook "systemctl stop nginx 2>/dev/null || true" \
+        --post-hook "systemctl start nginx 2>/dev/null || true" \
+        2>&1 | tee /tmp/certbot.log; then
+
+        CERTS_DIR="/etc/letsencrypt/live/${DOMAIN_INPUT}"
+        if [ -d "$CERTS_DIR" ]; then
+            info "Certificado generado OK"
+
+            # Copiar certificados a volumenes accesibles por nginx
+            mkdir -p ./ssl
+            cp "${CERTS_DIR}/fullchain.pem" ./ssl/cert.pem
+            cp "${CERTS_DIR}/privkey.pem" ./ssl/key.pem
+            chmod 644 ./ssl/cert.pem
+            chmod 600 ./ssl/key.pem
+
+            # Actualizar nginx.conf para SSL
+            info "Configurando nginx con SSL..."
+            cat > nginx.conf << 'ENGINX'
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name _;
+
+    ssl_certificate /etc/nginx/ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/key.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    root /var/www/html/public;
+    index index.php index.html;
+
+    client_max_body_size 50M;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+}
+ENGINX
+
+            # Agregar volumen SSL al servicio nginx en docker-compose.yml
+            if ! grep -q "ssl:/etc/nginx/ssl" docker-compose.yml; then
+                sed -i '/volumes:/,/nginx.conf:ro/a\      - ./ssl:/etc/nginx/ssl:ro' docker-compose.yml
+            fi
+
+            docker compose up -d --build nginx
+            info "SSL configurado y activo"
+        fi
+    else
+        warn "No se pudo generar el certificado SSL"
+        warn "Revisa /tmp/certbot.log"
+        docker compose start nginx
+    fi
+fi
+
+# ── 11. Resumen ────────────────────────────────────────────────
+APP_URL=$(grep "^APP_URL=" .env | cut -d= -f2 | tr -d '[:space:]')
+WEBHOOK_URL="${APP_URL}/api/webhook-pago?gateway=paypal"
+API_KEY=$(grep "^CHATBOT_API_KEY=" .env | cut -d= -f2)
+
 echo ""
 echo "=========================================="
 echo -e "${GREEN}  ¡DESPLIEGUE COMPLETO!${NC}"
 echo "=========================================="
 echo ""
-echo -e "${BLUE}  URLs del servidor:${NC}"
-echo "  ─────────────────────────────────"
-echo "  Chatbot API:  http://${SERVER_IP}:8000"
-echo "  Health check: http://${SERVER_IP}:8000/api/listar-paquetes"
+echo -e "${BLUE}  URL de la API:${NC}  ${APP_URL}"
+echo -e "${BLUE}  Webhook PayPal:${NC} ${WEBHOOK_URL}"
 echo ""
-echo -e "${BLUE}  Datos importantes (guárdalos):${NC}"
+echo -e "${BLUE}  Datos importantes:${NC}"
 echo "  ─────────────────────────────────"
 echo "  MySQL host:     db"
 echo "  MySQL user:     iptv_user"
 echo "  MySQL pass:     ${DB_PASS}"
 echo "  Database:       iptv_manager"
-echo "  Chatbot API-Key: ${CHATBOT_KEY}"
-echo ""
-echo -e "${BLUE}  PayPal Sandbox (prueba):${NC}"
-echo "  ─────────────────────────────────"
-echo "  Endpoint:     http://${SERVER_IP}:8000/api/crear-pago-paypal"
-echo "  Webhook:      http://${SERVER_IP}:8000/api/webhook-pago?gateway=paypal"
+echo "  Chatbot API-Key: ${API_KEY}"
 echo ""
 echo -e "${BLUE}  Comandos útiles:${NC}"
 echo "  ─────────────────────────────────"
 echo "  Ver logs:    docker compose logs -f"
-echo "  Reiniciar:   docker compose restart"
-echo "  Parar:       docker compose down"
-echo "  Estado:      docker compose ps"
+echo "  Reiniciar:  docker compose restart"
+echo "  Estado:     docker compose ps"
 echo ""
