@@ -129,7 +129,7 @@ docker compose up -d --build
 # ── 5. Esperar MySQL ───────────────────────────────────────────
 info "Esperando MySQL..."
 for i in $(seq 1 30); do
-    if docker exec iptv_chatbot_db mysqladmin ping -h 127.0.0.1 --silent 2>/dev/null; then
+    if docker exec iptv_chatbot_db mariadb -u root -p"${MYSQL_ROOT_PASS}" -e "SELECT 1" &>/dev/null; then
         info "MySQL listo tras ${i}s"
         break
     fi
@@ -139,7 +139,7 @@ done
 
 # ── 6. Crear DB y usuario ──────────────────────────────────────
 info "Creando base de datos y permisos..."
-docker exec iptv_chatbot_db mysql -u root -p"${MYSQL_ROOT_PASS}" << 'EOSQL'
+docker exec iptv_chatbot_db mariadb -u root -p"${MYSQL_ROOT_PASS}" << 'EOSQL'
 CREATE DATABASE IF NOT EXISTS `iptv_manager`
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS 'iptv_user'@'%' IDENTIFIED BY 'PLACEHOLDER';
@@ -148,12 +148,12 @@ GRANT ALL PRIVILEGES ON `iptv_manager`.* TO 'iptv_user'@'%';
 FLUSH PRIVILEGES;
 EOSQL
 
-docker exec iptv_chatbot_db mysql -u root -p"${MYSQL_ROOT_PASS}" \
+docker exec iptv_chatbot_db mariadb -u root -p"${MYSQL_ROOT_PASS}" \
   -e "SET PASSWORD FOR 'iptv_user'@'%' = PASSWORD('${DB_PASS}'); FLUSH PRIVILEGES;"
 
 # ── 7. Importar schema ─────────────────────────────────────────
 info "Importando esquema de base de datos..."
-docker exec -i iptv_chatbot_db mysql -u iptv_user -p"${DB_PASS}" iptv_manager < schema.sql
+docker exec -i iptv_chatbot_db mariadb -u iptv_user -p"${DB_PASS}" iptv_manager < schema.sql
 info "Schema importado OK"
 
 # ── 8. Permisos storage ────────────────────────────────────────
