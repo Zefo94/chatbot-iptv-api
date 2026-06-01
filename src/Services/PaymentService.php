@@ -164,11 +164,30 @@ class PaymentService
             if ($captureCode === 201 && ($captureResp['status'] ?? '') === 'COMPLETED') {
                 $this->resolveRenewal($order['order_id'], 'paypal', (float)$order['monto']);
             } elseif ($captureCode >= 400) {
-                // Capture definitively rejected — mark order failed so chatbot stops retrying
-                $issue = $captureResp['details'][0]['issue'] ?? 'CAPTURE_FAILED';
-                $db->prepare("UPDATE `ordenes` SET `estado` = 'failed' WHERE `order_id` = :oid")
-                   ->execute([':oid' => $order['order_id']]);
-                LoggerService::logFile("PayPal capture rejected, order marked failed: {$order['order_id']} ({$issue})", "warning");
+                // Before marking failed, re-check PayPal: network error after capture may mean it
+                // actually succeeded on PayPal's side (client was charged despite the 4xx we received).
+                $ch2 = curl_init("{$baseUrl}/v2/checkout/orders/{$ppOrderId}");
+                curl_setopt_array($ch2, [
+                    CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => false,
+                    CURLOPT_HTTPHEADER => ["Authorization: Bearer {$accessToken}", 'Content-Type: application/json'],
+                ]);
+                $recheckData   = json_decode(curl_exec($ch2), true) ?? [];
+                $recheckStatus = $recheckData['status'] ?? '';
+                curl_close($ch2);
+
+                LoggerService::logFile("PayPal capture error re-check for {$ppOrderId}: status={$recheckStatus}", "info");
+
+                if ($recheckStatus === 'COMPLETED') {
+                    // PayPal processed it — client was charged; honour the renewal
+                    LoggerService::logFile("PayPal order {$ppOrderId} completed despite capture 4xx; honouring renewal.", "warning");
+                    $this->resolveRenewal($order['order_id'], 'paypal', (float)$order['monto']);
+                } else {
+                    // Truly rejected (TRANSACTION_REFUSED, etc.) — safe to mark failed
+                    $issue = $captureResp['details'][0]['issue'] ?? 'CAPTURE_FAILED';
+                    $db->prepare("UPDATE `ordenes` SET `estado` = 'failed' WHERE `order_id` = :oid")
+                       ->execute([':oid' => $order['order_id']]);
+                    LoggerService::logFile("PayPal capture rejected, order marked failed: {$order['order_id']} ({$issue})", "warning");
+                }
             }
         }
 
