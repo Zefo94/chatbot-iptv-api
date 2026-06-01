@@ -26,12 +26,14 @@ CREATE TABLE `clientes` (
 CREATE TABLE `ordenes` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `order_id` VARCHAR(64) NOT NULL UNIQUE COMMENT 'Unique identifier for the payment session',
+  `paypal_order_id` VARCHAR(32) NULL DEFAULT NULL COMMENT 'PayPal order ID for direct API capture',
   `line_id` INT NOT NULL COMMENT 'IPTV line ID',
   `dias` INT NOT NULL DEFAULT 30 COMMENT 'Days to renew (e.g., 30, 90, 365)',
   `monto` DECIMAL(10, 2) NOT NULL COMMENT 'Amount to pay',
   `estado` VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT 'pending, completed, expired, failed',
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX `idx_order_id` (`order_id`),
+  INDEX `idx_paypal_order_id` (`paypal_order_id`),
   INDEX `idx_line_id` (`line_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

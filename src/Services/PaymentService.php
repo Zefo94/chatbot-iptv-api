@@ -86,7 +86,90 @@ class PaymentService
             throw new Exception("La orden {$orderId} no existe en el sistema.");
         }
 
+        // If still pending and we have a paypal_order_id, check & auto-capture with PayPal
+        if ($order['estado'] === 'pending' && !empty($order['paypal_order_id'])) {
+            $order = $this->tryCapturePayPal($db, $order);
+        }
+
         return $order;
+    }
+
+    /**
+     * Checks PayPal for the current order status. If APPROVED, captures the payment
+     * and triggers renewal. Returns the refreshed order row.
+     */
+    private function tryCapturePayPal(\PDO $db, array $order): array
+    {
+        $config       = require dirname(__DIR__, 2) . '/config/payment.php';
+        $clientId     = $config['paypal']['client_id']     ?? '';
+        $clientSecret = $config['paypal']['client_secret'] ?? '';
+        $mode         = $config['paypal']['mode']          ?? 'sandbox';
+        $baseUrl      = ($mode === 'live')
+            ? 'https://api-m.paypal.com'
+            : 'https://api-m.sandbox.paypal.com';
+
+        if (empty($clientId) || empty($clientSecret)) return $order;
+
+        // 1. Get access token
+        $ch = curl_init("{$baseUrl}/v1/oauth2/token");
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_POST => true, CURLOPT_USERPWD => "{$clientId}:{$clientSecret}",
+            CURLOPT_POSTFIELDS => 'grant_type=client_credentials',
+            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+        ]);
+        $tokenData   = json_decode(curl_exec($ch), true) ?? [];
+        curl_close($ch);
+        $accessToken = $tokenData['access_token'] ?? '';
+        if (empty($accessToken)) {
+            LoggerService::logFile("tryCapturePayPal: no se pudo obtener token para orden {$order['order_id']}", "warning");
+            return $order;
+        }
+
+        $ppOrderId = $order['paypal_order_id'];
+
+        // 2. Get PayPal order status
+        $ch = curl_init("{$baseUrl}/v2/checkout/orders/{$ppOrderId}");
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_HTTPHEADER => ["Authorization: Bearer {$accessToken}", 'Content-Type: application/json'],
+        ]);
+        $ppOrder  = json_decode(curl_exec($ch), true) ?? [];
+        curl_close($ch);
+        $ppStatus = $ppOrder['status'] ?? '';
+
+        LoggerService::logFile("PayPal order {$ppOrderId} status from API: {$ppStatus}", "info");
+
+        if ($ppStatus === 'COMPLETED') {
+            // Already captured (e.g. via webhook); just run local renewal if not done yet
+            $this->resolveRenewal($order['order_id'], 'paypal', (float)$order['monto']);
+        } elseif ($ppStatus === 'APPROVED') {
+            // Capture the payment now
+            $ch = curl_init("{$baseUrl}/v2/checkout/orders/{$ppOrderId}/capture");
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_POST => true, CURLOPT_POSTFIELDS => '{}',
+                CURLOPT_HTTPHEADER => [
+                    "Authorization: Bearer {$accessToken}",
+                    'Content-Type: application/json',
+                    "PayPal-Request-Id: capture-{$order['order_id']}",
+                ],
+            ]);
+            $captureResp = json_decode(curl_exec($ch), true) ?? [];
+            $captureCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            LoggerService::logFile("PayPal capture {$ppOrderId} → HTTP {$captureCode}: " . json_encode($captureResp), "info");
+
+            if ($captureCode === 201 && ($captureResp['status'] ?? '') === 'COMPLETED') {
+                $this->resolveRenewal($order['order_id'], 'paypal', (float)$order['monto']);
+            }
+        }
+
+        // Re-read the order so estado reflects any update made by resolveRenewal
+        $stmt = $db->prepare("SELECT * FROM `ordenes` WHERE `order_id` = :order_id LIMIT 1");
+        $stmt->execute([':order_id' => $order['order_id']]);
+        return $stmt->fetch() ?: $order;
     }
 
     /**
@@ -552,8 +635,8 @@ class PaymentService
             ]],
             'application_context' => [
                 'user_action' => 'PAY_NOW',
-                'return_url'  => 'https://example.com/pago-exitoso',
-                'cancel_url'  => 'https://example.com/pago-cancelado',
+                'return_url'  => env('PAYPAL_RETURN_URL', 'https://solucionesdigitales.icu/pago-exitoso'),
+                'cancel_url'  => env('PAYPAL_CANCEL_URL', 'https://solucionesdigitales.icu/pago-cancelado'),
             ],
         ];
 
@@ -591,6 +674,15 @@ class PaymentService
         }
 
         LoggerService::logFile("PayPal order created: {$orderData['id']} (local={$orderId})", "info");
+
+        // Persist the PayPal order ID so we can check/capture it later
+        try {
+            $db  = Connection::getInstance();
+            $upd = $db->prepare("UPDATE `ordenes` SET `paypal_order_id` = :pid WHERE `order_id` = :oid");
+            $upd->execute([':pid' => $orderData['id'], ':oid' => $orderId]);
+        } catch (\Exception $e) {
+            LoggerService::logFile("Warning: could not save paypal_order_id for {$orderId}: " . $e->getMessage(), "warning");
+        }
 
         return [
             'paypal_order_id' => $orderData['id'],
