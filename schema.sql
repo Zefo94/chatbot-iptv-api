@@ -99,6 +99,11 @@ ALTER TABLE `clientes` ADD INDEX IF NOT EXISTS `idx_revendedor_id` (`revendedor_
 -- Safe to run even if the unique index was already dropped
 ALTER TABLE `clientes` DROP INDEX IF EXISTS `telefono`;
 
+-- Store reseller and package on orders so the webhook can deduct credits after payment
+ALTER TABLE `ordenes` ADD COLUMN IF NOT EXISTS `revendedor_id` INT NULL AFTER `estado`;
+ALTER TABLE `ordenes` ADD COLUMN IF NOT EXISTS `package_id`    INT NULL AFTER `revendedor_id`;
+ALTER TABLE `ordenes` ADD INDEX IF NOT EXISTS `idx_ord_revendedor` (`revendedor_id`);
+
 -- Insert dynamic seed configurations/examples for structure verification
 INSERT INTO `logs` (`accion`, `request_json`, `response_json`) VALUES
 ('SYSTEM_INITIALIZATION', '{"status": "ready"}', '{"message": "IPTV Schema successfully initialized"}');

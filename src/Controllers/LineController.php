@@ -80,6 +80,22 @@ class LineController extends BaseController
                 exit;
             }
 
+            // Sync fresh XUI data back to local cache so buscar-usuario / listar-mis-lineas stay accurate
+            try {
+                $db = Connection::getInstance();
+                $db->prepare("
+                    UPDATE `clientes`
+                    SET `estado` = :estado, `fecha_vencimiento` = :exp
+                    WHERE `line_id` = :lid
+                ")->execute([
+                    ':estado' => $response['enabled'] ? 'active' : 'suspended',
+                    ':exp'    => $response['exp_date'],
+                    ':lid'    => $lineId,
+                ]);
+            } catch (\Exception $cacheEx) {
+                LoggerService::logFile("consultar-linea: cache sync failed: " . $cacheEx->getMessage(), "warning");
+            }
+
             // Clean custom response matching requested chatbot specifications
             $this->json(array_merge(['success' => true], $response));
 

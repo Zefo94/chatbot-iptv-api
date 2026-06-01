@@ -27,7 +27,7 @@ class PaymentService
      * @return array
      * @throws Exception
      */
-    public function createOrder(int $lineId, int $dias, float $monto): array
+    public function createOrder(int $lineId, int $dias, float $monto, ?int $revendedorId = null, ?int $packageId = null): array
     {
         // 1. Verify that the line_id actually exists in XUI.ONE before making an order
         try {
@@ -46,15 +46,17 @@ class PaymentService
         $orderId = 'ORD-' . strtoupper(bin2hex(random_bytes(8)));
 
         $stmt = $db->prepare("
-            INSERT INTO `ordenes` (`order_id`, `line_id`, `dias`, `monto`, `estado`, `created_at`)
-            VALUES (:order_id, :line_id, :dias, :monto, 'pending', NOW())
+            INSERT INTO `ordenes` (`order_id`, `line_id`, `dias`, `monto`, `estado`, `revendedor_id`, `package_id`, `created_at`)
+            VALUES (:order_id, :line_id, :dias, :monto, 'pending', :revendedor_id, :package_id, NOW())
         ");
 
         $stmt->execute([
-            ':order_id' => $orderId,
-            ':line_id'  => $lineId,
-            ':dias'     => $dias,
-            ':monto'    => $monto
+            ':order_id'     => $orderId,
+            ':line_id'      => $lineId,
+            ':dias'         => $dias,
+            ':monto'        => $monto,
+            ':revendedor_id'=> $revendedorId,
+            ':package_id'   => $packageId,
         ]);
 
         LoggerService::logFile("Payment order generated successfully: {$orderId} for Line: {$lineId}", "info");
@@ -423,8 +425,18 @@ class PaymentService
 
             $db->commit();
 
-            LoggerService::logFile("Successfully renewed Line ID: {$lineId} for {$daysToExtend} days. New expiry: {$newExpirationFormatted}", "info");
-            
+            // 10. Deduct reseller credits AFTER committing (non-critical — don't roll back renewal if this fails)
+            $creditosDeducidos = 0;
+            if (!empty($order['revendedor_id']) && !empty($order['package_id'])) {
+                try {
+                    $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
+                } catch (Exception $creditEx) {
+                    LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']} on order {$orderId}: " . $creditEx->getMessage(), "warning");
+                }
+            }
+
+            LoggerService::logFile("Successfully renewed Line ID: {$lineId} for {$daysToExtend} days. New expiry: {$newExpirationFormatted}. Credits deducted: {$creditosDeducidos}", "info");
+
             // Audit action to Logs DB
             LoggerService::logAction("AUTOMATIC_LINE_RENEWAL", [
                 'order_id' => $orderId,
@@ -443,6 +455,73 @@ class PaymentService
             LoggerService::logFile("Critical failure resolving payment renewal for Order: {$orderId}. Details: " . $e->getMessage(), "error");
             throw $e;
         }
+    }
+
+    /**
+     * Deduct XUI credits from a reseller after a successful renewal.
+     * Looks up the reseller by xui_user_id, reads live balance, subtracts package cost,
+     * updates XUI via admin edit_user, and syncs local cache.
+     *
+     * @param int $revendedorXuiId  xui_user_id of the reseller
+     * @param int $packageId        XUI package whose official_credits is the cost
+     * @return int credits deducted (0 if package has no cost)
+     */
+    private function deductResellerCredits(int $revendedorXuiId, int $packageId): int
+    {
+        $db = Connection::getInstance();
+
+        // Resolve reseller row
+        $stmt = $db->prepare("SELECT * FROM `revendedores` WHERE `xui_user_id` = :id LIMIT 1");
+        $stmt->execute([':id' => $revendedorXuiId]);
+        $reseller = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$reseller) {
+            throw new Exception("Reseller with xui_user_id={$revendedorXuiId} not found.");
+        }
+
+        // Get package credit cost via admin API
+        $pkgList = $this->xuiService->requestAsAdmin('get_packages', []);
+        $pkgData = isset($pkgList['data']) && is_array($pkgList['data']) ? $pkgList['data'] : (is_array($pkgList) ? $pkgList : []);
+        $cost = 0;
+        foreach ($pkgData as $pkg) {
+            if ((int)($pkg['id'] ?? 0) === $packageId) {
+                $cost = (int)($pkg['official_credits'] ?? 0);
+                break;
+            }
+        }
+
+        if ($cost <= 0) {
+            return 0;
+        }
+
+        // Read current reseller balance
+        $this->xuiService->useResellerAuth($reseller['xui_api_key']);
+        try {
+            $info = $this->xuiService->request('user_info', []);
+            $infoData = isset($info['data']) && is_array($info['data']) ? $info['data'] : $info;
+            $current = (int)($infoData['credits'] ?? 0);
+            $email   = (string)($infoData['email'] ?? '');
+        } finally {
+            $this->xuiService->clearResellerAuth();
+        }
+
+        $newBalance = max(0, $current - $cost);
+
+        // Apply new balance via admin
+        $this->xuiService->requestAsAdmin('edit_user', [
+            'id'              => $revendedorXuiId,
+            'username'        => $reseller['xui_username'],
+            'email'           => $email,
+            'credits'         => $newBalance,
+            'member_group_id' => 2,
+        ]);
+
+        // Sync local cache
+        $db->prepare("UPDATE `revendedores` SET `creditos_cache` = :c WHERE `id` = :id")
+           ->execute([':c' => $newBalance, ':id' => (int)$reseller['id']]);
+
+        LoggerService::logFile("Credits deducted: reseller {$reseller['xui_username']} {$current} → {$newBalance} (-{$cost} for package {$packageId})", "info");
+
+        return $cost;
     }
 
     # ==========================================================================

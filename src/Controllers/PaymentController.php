@@ -142,10 +142,15 @@ class PaymentController extends BaseController
             if ($dias <= 0)  $this->error("Debes proporcionar 'dias' o 'package_id'.", 400);
             if ($monto <= 0) $this->error("Debes proporcionar 'monto' o 'package_id' con PAYPAL_PRICE_PER_CREDIT configurado.", 400);
 
+            $revendedorId = !empty($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
+            $pkgIdForOrder = isset($input['package_id']) ? (int)$input['package_id'] : null;
+
             $order = $this->paymentService->createOrder(
                 (int)$input['line_id'],
                 $dias,
-                $monto
+                $monto,
+                $revendedorId,
+                $pkgIdForOrder
             );
 
             $currency   = isset($input['currency']) ? strtoupper(trim($input['currency'])) : 'USD';
