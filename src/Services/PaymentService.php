@@ -422,8 +422,8 @@ class PaymentService
      */
     private function notifyClientWhatsApp(\PDO $db, int $lineId, int $days, string $newExpiry): void
     {
-        $notifyUrl = env('TICKET_SYSTEM_URL', '');
-        $secret    = env('TICKET_SYSTEM_SECRET', '');
+        $notifyUrl = $_ENV['TICKET_SYSTEM_URL'] ?? '';
+        $secret    = $_ENV['TICKET_SYSTEM_SECRET'] ?? '';
         if (empty($notifyUrl) || empty($secret)) {
             return;
         }
@@ -635,8 +635,8 @@ class PaymentService
             ]],
             'application_context' => [
                 'user_action' => 'PAY_NOW',
-                'return_url'  => env('PAYPAL_RETURN_URL', 'https://solucionesdigitales.icu/pago-exitoso'),
-                'cancel_url'  => env('PAYPAL_CANCEL_URL', 'https://solucionesdigitales.icu/pago-cancelado'),
+                'return_url'  => $_ENV['PAYPAL_RETURN_URL'] ?? 'https://solucionesdigitales.icu/pago-exitoso',
+                'cancel_url'  => $_ENV['PAYPAL_CANCEL_URL'] ?? 'https://solucionesdigitales.icu/pago-cancelado',
             ],
         ];
 
