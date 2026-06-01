@@ -459,26 +459,15 @@ class PaymentService
 
     /**
      * Deduct XUI credits from a reseller after a successful renewal.
-     * Looks up the reseller by xui_user_id, reads live balance, subtracts package cost,
-     * updates XUI via admin edit_user, and syncs local cache.
+     * Works entirely via admin API — no dependency on the local revendedores table.
      *
-     * @param int $revendedorXuiId  xui_user_id of the reseller
-     * @param int $packageId        XUI package whose official_credits is the cost
+     * @param int $revendedorId  XUI user id of the reseller (as stored in ordenes.revendedor_id)
+     * @param int $packageId     XUI package whose official_credits is the cost
      * @return int credits deducted (0 if package has no cost)
      */
     private function deductResellerCredits(int $revendedorId, int $packageId): int
     {
-        $db = Connection::getInstance();
-
-        // Accept either local id or xui_user_id — try both columns
-        $stmt = $db->prepare("SELECT * FROM `revendedores` WHERE `id` = :id OR `xui_user_id` = :id2 LIMIT 1");
-        $stmt->execute([':id' => $revendedorId, ':id2' => $revendedorId]);
-        $reseller = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$reseller) {
-            throw new Exception("Reseller with id/xui_user_id={$revendedorId} not found.");
-        }
-
-        // Get package credit cost via admin API
+        // 1. Get package credit cost via admin API
         $pkgList = $this->xuiService->requestAsAdmin('get_packages', []);
         $pkgData = isset($pkgList['data']) && is_array($pkgList['data']) ? $pkgList['data'] : (is_array($pkgList) ? $pkgList : []);
         $cost = 0;
@@ -493,33 +482,39 @@ class PaymentService
             return 0;
         }
 
-        // Read current reseller balance
-        $this->xuiService->useResellerAuth($reseller['xui_api_key']);
-        try {
-            $info = $this->xuiService->request('user_info', []);
-            $infoData = isset($info['data']) && is_array($info['data']) ? $info['data'] : $info;
-            $current = (int)($infoData['credits'] ?? 0);
-            $email   = (string)($infoData['email'] ?? '');
-        } finally {
-            $this->xuiService->clearResellerAuth();
+        // 2. Get reseller current info directly from XUI via admin get_user
+        $userInfo = $this->xuiService->requestAsAdmin('get_user', ['id' => $revendedorId]);
+        $userData = isset($userInfo['data']) && is_array($userInfo['data']) ? $userInfo['data'] : $userInfo;
+
+        if (empty($userData) || empty($userData['username'])) {
+            throw new Exception("XUI user id={$revendedorId} not found via admin get_user.");
         }
+
+        $current  = (int)($userData['credits'] ?? 0);
+        $username = (string)($userData['username'] ?? '');
+        $email    = (string)($userData['email'] ?? '');
 
         $newBalance = max(0, $current - $cost);
 
-        // Apply new balance via admin
+        // 3. Apply new balance via admin edit_user
         $this->xuiService->requestAsAdmin('edit_user', [
-            'id'              => $revendedorXuiId,
-            'username'        => $reseller['xui_username'],
+            'id'              => $revendedorId,
+            'username'        => $username,
             'email'           => $email,
             'credits'         => $newBalance,
             'member_group_id' => 2,
         ]);
 
-        // Sync local cache
-        $db->prepare("UPDATE `revendedores` SET `creditos_cache` = :c WHERE `id` = :id")
-           ->execute([':c' => $newBalance, ':id' => (int)$reseller['id']]);
+        // 4. Sync local cache if the reseller row exists (non-critical)
+        try {
+            $db = Connection::getInstance();
+            $db->prepare("UPDATE `revendedores` SET `creditos_cache` = :c WHERE `xui_user_id` = :id OR `id` = :id2")
+               ->execute([':c' => $newBalance, ':id' => $revendedorId, ':id2' => $revendedorId]);
+        } catch (\Exception $e) {
+            LoggerService::logFile("deductResellerCredits: local cache sync skipped: " . $e->getMessage(), "warning");
+        }
 
-        LoggerService::logFile("Credits deducted: reseller {$reseller['xui_username']} {$current} → {$newBalance} (-{$cost} for package {$packageId})", "info");
+        LoggerService::logFile("Credits deducted: reseller {$username} (xui_id={$revendedorId}) {$current} → {$newBalance} (-{$cost} for package {$packageId})", "info");
 
         return $cost;
     }
