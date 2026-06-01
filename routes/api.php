@@ -10,6 +10,7 @@ return [
         '/api/buscar-usuario'     => ['App\Controllers\UserController', 'buscar'],
         '/api/listar-mis-lineas'  => ['App\Controllers\UserController', 'listarMisLineas'],
         '/api/consultar-linea'    => ['App\Controllers\LineController', 'consultar'],
+        '/api/vincular-cuenta'    => ['App\Controllers\LineController', 'vincularCuenta'],
         '/api/crear-linea'        => ['App\Controllers\LineController', 'crear'],
         '/api/renovar-linea'      => ['App\Controllers\LineController', 'renovar'],
         '/api/suspender-linea'    => ['App\Controllers\LineController', 'suspender'],

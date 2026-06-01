@@ -724,6 +724,119 @@ class LineController extends BaseController
     }
 
     /**
+     * Verifica un username en XUI y lo vincula automáticamente al número de WhatsApp.
+     * Si ya está vinculado, devuelve los datos existentes.
+     *
+     * POST /api/vincular-cuenta
+     * Body: { "telefono": "+57...", "username": "mi_usuario_iptv", "revendedor_id": 17 }
+     */
+    public function vincularCuenta(): void
+    {
+        $input = $this->getRequestData();
+
+        $this->validate($input, [
+            'telefono' => 'required|string',
+            'username' => 'required|string',
+        ]);
+
+        $phone    = trim($input['telefono']);
+        $username = trim($input['username']);
+
+        try {
+            $reseller   = $this->maybeUseReseller($input);
+            $resellerId = $reseller ? (int)$reseller['id'] : null;
+
+            $db = Connection::getInstance();
+
+            // 1. ¿Ya está vinculado este username a otro teléfono?
+            $stmt = $db->prepare("SELECT * FROM `clientes` WHERE `username` = :user LIMIT 1");
+            $stmt->execute([':user' => $username]);
+            $existing = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+            if ($existing) {
+                // Ya existe — actualizar teléfono si cambió y devolver datos
+                if ($existing['telefono'] !== $phone) {
+                    $db->prepare("UPDATE `clientes` SET `telefono` = :phone WHERE `username` = :user")
+                       ->execute([':phone' => $phone, ':user' => $username]);
+                    $existing['telefono'] = $phone;
+                }
+                $exp = $existing['fecha_vencimiento'];
+                $enabled = ($existing['estado'] === 'active');
+                $this->json([
+                    'success'           => true,
+                    'vinculado'         => true,
+                    'ya_existia'        => true,
+                    'username'          => $existing['username'],
+                    'line_id'           => (int)$existing['line_id'],
+                    'telefono'          => $existing['telefono'],
+                    'estado'            => $existing['estado'],
+                    'fecha_vencimiento' => $exp,
+                    'message'           => "📺 *{$username}*\n📅 Vence: {$exp}\n⚡ " . ($enabled ? 'Activo 🟢' : 'Suspendido 🔴'),
+                ]);
+                return;
+            }
+
+            // 2. Buscar en XUI por username
+            $xuiData = $this->xuiService->findLineByUsername($username);
+
+            if (empty($xuiData)) {
+                $this->error("No encontré el usuario '{$username}' en el sistema IPTV. Verifica que sea correcto.", 404);
+            }
+
+            $target = isset($xuiData['data']) ? $xuiData['data'] : $xuiData;
+            $lineId = (int)($target['id'] ?? $target['line_id'] ?? 0);
+
+            if ($lineId === 0) {
+                $this->error("No se pudo obtener el ID de línea para '{$username}'.", 500);
+            }
+
+            $exp = $target['exp_date'] ?? null;
+            if (is_numeric($exp) && (int)$exp >= 2147483647) {
+                $expiryFormatted = 'Nunca (Ilimitada)';
+                $expiryDb = '2099-12-31 23:59:59';
+            } else {
+                $expiryDb = $expiryFormatted = is_numeric($exp) ? date('Y-m-d H:i:s', (int)$exp) : ($exp ?? date('Y-m-d H:i:s', strtotime('+30 days')));
+            }
+
+            $enabled = (bool)($target['enabled'] ?? true);
+            $estado  = $enabled ? 'active' : 'suspended';
+
+            // 3. Registrar en clientes
+            $db->prepare("
+                INSERT INTO `clientes` (`telefono`, `username`, `line_id`, `revendedor_id`, `estado`, `fecha_vencimiento`, `created_at`)
+                VALUES (:phone, :username, :line_id, :revendedor_id, :estado, :expiry, NOW())
+            ")->execute([
+                ':phone'        => $phone,
+                ':username'     => $username,
+                ':line_id'      => $lineId,
+                ':revendedor_id'=> $resellerId,
+                ':estado'       => $estado,
+                ':expiry'       => $expiryDb,
+            ]);
+
+            LoggerService::logAction("VINCULAR_CUENTA", $input, ['username' => $username, 'line_id' => $lineId]);
+
+            $this->json([
+                'success'           => true,
+                'vinculado'         => true,
+                'ya_existia'        => false,
+                'username'          => $username,
+                'line_id'           => $lineId,
+                'telefono'          => $phone,
+                'estado'            => $estado,
+                'fecha_vencimiento' => $expiryFormatted,
+                'message'           => "✅ Cuenta vinculada exitosamente.\n\n📺 *{$username}*\n📅 Vence: {$expiryFormatted}\n⚡ " . ($enabled ? 'Activo 🟢' : 'Suspendido 🔴'),
+            ]);
+
+        } catch (Exception $e) {
+            LoggerService::logFile("Error in vincular-cuenta: " . $e->getMessage(), "error");
+            $this->error("Error al vincular la cuenta: " . $e->getMessage(), 500);
+        } finally {
+            $this->xuiService->clearResellerAuth();
+        }
+    }
+
+    /**
      * True when the given phone can be stored for the username without violating telefono UNIQUE.
      * Empty phone returns false so callers fall back to the placeholder format.
      */
