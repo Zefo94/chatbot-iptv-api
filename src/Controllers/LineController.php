@@ -665,9 +665,7 @@ class LineController extends BaseController
                 } else {
                     $expFormatted = is_numeric($exp) ? date('Y-m-d H:i:s', (int)$exp) : ($exp ?: '2099-12-31 23:59:59');
                 }
-                $phoneToStore = $this->phoneAvailableForUsername($db, $providedPhone, $username)
-                    ? $providedPhone
-                    : 'xui-sync-' . $username;
+                $phoneToStore = $providedPhone ?: ('xui-sync-' . $username);
 
                 // Resolve reseller local id from xui_user_id if provided
                 $resellerLocalId = null;
@@ -702,8 +700,7 @@ class LineController extends BaseController
 
     /**
      * Replace a placeholder telefono ('xui-sync-*') with the real one when the chatbot provides it.
-     * No-op if the row already has a real phone, the new phone is empty/identical, or the new phone
-     * is already taken by another username (telefono is UNIQUE in the schema).
+     * No-op if the row already has a real phone or the new phone is empty/identical.
      */
     private function upgradePlaceholderPhone(\PDO $db, string $username, string $currentPhone, string $newPhone): void
     {
@@ -711,10 +708,6 @@ class LineController extends BaseController
             return;
         }
         if (!str_starts_with($currentPhone, 'xui-sync-')) {
-            return;
-        }
-        if (!$this->phoneAvailableForUsername($db, $newPhone, $username)) {
-            LoggerService::logFile("Skip phone upgrade for '{$username}': phone '{$newPhone}' already linked to another username", "warning");
             return;
         }
         try {
@@ -839,18 +832,4 @@ class LineController extends BaseController
         }
     }
 
-    /**
-     * True when the given phone can be stored for the username without violating telefono UNIQUE.
-     * Empty phone returns false so callers fall back to the placeholder format.
-     */
-    private function phoneAvailableForUsername(\PDO $db, string $phone, string $username): bool
-    {
-        if ($phone === '') {
-            return false;
-        }
-        $stmt = $db->prepare("SELECT `username` FROM `clientes` WHERE `telefono` = :phone LIMIT 1");
-        $stmt->execute([':phone' => $phone]);
-        $row = $stmt->fetch();
-        return !$row || ($row['username'] ?? '') === $username;
-    }
 }

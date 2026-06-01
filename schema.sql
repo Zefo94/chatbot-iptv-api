@@ -11,7 +11,7 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- 1. Table for Chatbot Clients
 CREATE TABLE `clientes` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `telefono` VARCHAR(20) NOT NULL UNIQUE COMMENT 'Phone number from chatbot (e.g. +573001234567)',
+  `telefono` VARCHAR(20) NOT NULL COMMENT 'Phone number from chatbot (e.g. +573001234567) — NOT unique; one phone can have N IPTV accounts',
   `username` VARCHAR(50) NOT NULL UNIQUE COMMENT 'IPTV line username in XUI.ONE',
   `line_id` INT NOT NULL UNIQUE COMMENT 'IPTV line ID in XUI.ONE',
   `estado` VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT 'active, suspended, expired',
@@ -94,6 +94,10 @@ CREATE TABLE `recargas` (
 -- Update clientes to add revendedor_id column
 ALTER TABLE `clientes` ADD COLUMN IF NOT EXISTS `revendedor_id` INT NULL AFTER `estado`;
 ALTER TABLE `clientes` ADD INDEX IF NOT EXISTS `idx_revendedor_id` (`revendedor_id`);
+
+-- Allow multiple IPTV accounts per phone number (one client can have N lines)
+-- Safe to run even if the unique index was already dropped
+ALTER TABLE `clientes` DROP INDEX IF EXISTS `telefono`;
 
 -- Insert dynamic seed configurations/examples for structure verification
 INSERT INTO `logs` (`accion`, `request_json`, `response_json`) VALUES
