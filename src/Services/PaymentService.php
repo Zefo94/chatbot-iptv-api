@@ -91,6 +91,14 @@ class PaymentService
             $order = $this->tryCapturePayPal($db, $order);
         }
 
+        // Enrich completed orders with the client's current expiry date
+        if ($order['estado'] === 'completed') {
+            $expStmt = $db->prepare("SELECT `fecha_vencimiento` FROM `clientes` WHERE `line_id` = :lid LIMIT 1");
+            $expStmt->execute([':lid' => $order['line_id']]);
+            $clientRow = $expStmt->fetch();
+            $order['fecha_vencimiento'] = $clientRow['fecha_vencimiento'] ?? null;
+        }
+
         return $order;
     }
 
@@ -429,58 +437,11 @@ class PaymentService
                 'xui_response' => $xuiUpdate
             ]);
 
-            // Notificar al cliente por WhatsApp (si TICKET_SYSTEM_URL está configurado)
-            $this->notifyClientWhatsApp($db, $lineId, $daysToExtend, $newExpirationFormatted);
-
             return true;
         } catch (Exception $e) {
             $db->rollBack();
             LoggerService::logFile("Critical failure resolving payment renewal for Order: {$orderId}. Details: " . $e->getMessage(), "error");
             throw $e;
-        }
-    }
-
-    /**
-     * Envía notificación de renovación exitosa al cliente por WhatsApp.
-     * Requiere TICKET_SYSTEM_URL y TICKET_SYSTEM_SECRET en el .env del VPS.
-     * Si no están configurados, omite silenciosamente.
-     */
-    private function notifyClientWhatsApp(\PDO $db, int $lineId, int $days, string $newExpiry): void
-    {
-        $notifyUrl = $_ENV['TICKET_SYSTEM_URL'] ?? '';
-        $secret    = $_ENV['TICKET_SYSTEM_SECRET'] ?? '';
-        if (empty($notifyUrl) || empty($secret)) {
-            return;
-        }
-
-        try {
-            $stmt = $db->prepare("SELECT `telefono`, `username` FROM `clientes` WHERE `line_id` = :lid LIMIT 1");
-            $stmt->execute([':lid' => $lineId]);
-            $client = $stmt->fetch();
-
-            if (!$client || empty($client['telefono'])) {
-                return;
-            }
-
-            $phone    = $client['telefono'];
-            $username = $client['username'];
-            $message  = "✅ *¡Pago confirmado!*\n\n📺 Tu cuenta *{$username}* fue renovada por *{$days} días*.\n📅 Nuevo vencimiento: {$newExpiry}\n\n¡Disfruta tu servicio IPTV! 🎉";
-
-            $ch = curl_init(rtrim($notifyUrl, '/') . '/api/internal/notify-payment');
-            curl_setopt_array($ch, [
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => json_encode(['phone' => $phone, 'message' => $message, 'secret' => $secret]),
-                CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT        => 8,
-            ]);
-            $resp = curl_exec($ch);
-            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-
-            LoggerService::logFile("WhatsApp notify for line {$lineId} → HTTP {$code}: {$resp}", "info");
-        } catch (\Exception $e) {
-            LoggerService::logFile("WhatsApp notify failed for line {$lineId}: " . $e->getMessage(), "warning");
         }
     }
 

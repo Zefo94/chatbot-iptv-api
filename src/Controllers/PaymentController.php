@@ -71,12 +71,13 @@ class PaymentController extends BaseController
             $order = $this->paymentService->getOrderStatus($orderId);
 
             $responseData = [
-                'order_id'   => $order['order_id'],
-                'line_id'    => (int)$order['line_id'],
-                'dias'       => (int)$order['dias'],
-                'monto'      => (float)$order['monto'],
-                'estado'     => $order['estado'],
-                'created_at' => $order['created_at']
+                'order_id'          => $order['order_id'],
+                'line_id'           => (int)$order['line_id'],
+                'dias'              => (int)$order['dias'],
+                'monto'             => (float)$order['monto'],
+                'estado'            => $order['estado'],
+                'fecha_vencimiento' => $order['fecha_vencimiento'] ?? null,
+                'created_at'        => $order['created_at'],
             ];
 
             LoggerService::logAction("CONSULTAR_PAGO", $input, $responseData);
