@@ -15,7 +15,17 @@ SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null \
   || curl -s -m 5 https://api.ipify.org 2>/dev/null \
   || hostname -I | awk '{print $1}' || echo "")
 SERVER_IP=$(echo "$SERVER_IP" | tr -d '[:space:]')
+
+# Si el usuario pasó un dominio como argumento, usarlo; si no, usar IP
+if [ -n "$1" ]; then
+    SERVER_DOMAIN="$1"
+    BASE_URL="https://${SERVER_DOMAIN}"
+else
+    BASE_URL="http://${SERVER_IP}"
+fi
+
 info "IP detectada: $SERVER_IP"
+info "URL base: $BASE_URL"
 echo "=========================================="
 
 # ── 0. Limpiar locks de dpkg ────────────────────────────────
@@ -49,7 +59,6 @@ done
 
 apt-get update -qq 2>&1 | tail -3
 
-# Instalar nginx + mariadb + herramientas
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     nginx mariadb-server mariadb-client curl git unzip openssl \
     software-properties-common 2>&1 | tail -5
@@ -63,7 +72,6 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     php8.2-fpm php8.2-mysql php8.2-cli php8.2-xml php8.2-mbstring \
     php8.2-curl php8.2-zip php8.2-bcmath php8.2-opcache php8.2-intl 2>&1 | tail -5
 
-# Verificar
 php -v | head -1 || fatal "PHP no se instaló"
 nginx -v 2>&1 | head -1 || fatal "Nginx no se instaló"
 mariadb --version | head -1 || fatal "MariaDB no se instaló"
@@ -80,8 +88,10 @@ mkdir -p /var/www/html
 cd /var/www/html
 git clone https://github.com/Zefo94/chatbot-iptv-api.git . 2>&1 | tail -3
 
-# ── Patch: agregar función env() que falta en public/index.php ──
-info "Aplicando patch de env()..."
+# ── Patch: función env() + CORS restringido ─────────────────
+info "Aplicando patches..."
+
+# Patch 1: función env() faltante
 if ! grep -q "^function env(" /var/www/html/public/index.php 2>/dev/null; then
     sed -i '/function loadEnvironmentVariables/i\
 function env($key, $default = null) {\
@@ -90,7 +100,9 @@ function env($key, $default = null) {\
 ' /var/www/html/public/index.php
 fi
 
-ls -la
+# Patch 2: CORS restringido al dominio o IP
+CORS_VALUE="${BASE_URL}"
+sed -i "s|header('Access-Control-Allow-Origin: \*');|header('Access-Control-Allow-Origin: ${CORS_VALUE}');|g" /var/www/html/public/index.php
 
 info "Instalando Composer..."
 curl -sS https://getcomposer.org/installer | php
@@ -104,7 +116,6 @@ COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-
 info "Configurando MariaDB..."
 service mariadb start
 
-# Esperar MySQL
 for i in $(seq 1 15); do
     if mariadb -u root -e "SELECT 1" &>/dev/null; then
         info "MariaDB listo tras ${i}s"
@@ -114,7 +125,6 @@ for i in $(seq 1 15); do
     sleep 1
 done
 
-# Crear DB y usuario (password temporal)
 mariadb -u root << 'EOSQL'
 CREATE DATABASE IF NOT EXISTS `iptv_manager` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS 'iptv_user'@'localhost' IDENTIFIED BY 'temp_pass_placeholder';
@@ -122,9 +132,7 @@ GRANT ALL PRIVILEGES ON `iptv_manager`.* TO 'iptv_user'@'localhost';
 FLUSH PRIVILEGES;
 EOSQL
 
-# Importar schema
 mariadb -u iptv_user -p'temp_pass_placeholder' iptv_manager < /var/www/html/schema.sql 2>&1 | tail -3
-
 info "Base de datos lista"
 
 # ── 7. Nginx ────────────────────────────────────────────────
@@ -138,7 +146,6 @@ server {
     index index.php index.html;
     client_max_body_size 50M;
 
-    # Seguridad
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
@@ -168,14 +175,10 @@ CHATBOT_KEY=$(openssl rand -hex 32)
 DB_PASS=$(openssl rand -hex 20)
 MYSQL_ROOT_PASS=$(openssl rand -hex 20)
 
-# PayPal: dejar vacío para que el usuario lo complete desde el panel
-PAYPAL_CLIENT_ID_VALUE="YOUR_PAYPAL_CLIENT_ID"
-PAYPAL_CLIENT_SECRET_VALUE="YOUR_PAYPAL_CLIENT_SECRET"
-
 cat > /var/www/html/.env << EOF
 APP_ENV=production
 APP_DEBUG=false
-APP_URL=http://${SERVER_IP}
+APP_URL=${BASE_URL}
 CHATBOT_API_KEY=${CHATBOT_KEY}
 DB_HOST=localhost
 DB_PORT=3306
@@ -186,8 +189,8 @@ MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASS}
 XUI_API_URL=http://tripic.space/miapixui/
 XUI_API_KEY=30B0DD094F41213AB3394E374BA6A557
 XUI_RESELLER_API_URL=http://tripic.space:80/resselerapi/
-PAYPAL_CLIENT_ID=${PAYPAL_CLIENT_ID_VALUE}
-PAYPAL_CLIENT_SECRET=${PAYPAL_CLIENT_SECRET_VALUE}
+PAYPAL_CLIENT_ID=YOUR_PAYPAL_CLIENT_ID
+PAYPAL_CLIENT_SECRET=YOUR_PAYPAL_CLIENT_SECRET
 PAYPAL_WEBHOOK_ID=
 PAYPAL_MODE=sandbox
 PAYPAL_PRICE_PER_CREDIT=10.00
@@ -196,8 +199,7 @@ EOF
 chown www-data:www-data /var/www/html/.env
 chmod 600 /var/www/html/.env
 
-# Actualizar password real del usuario DB usando variable expandida
-info "Estableciendo password de DB..."
+# Actualizar password real de DB
 mariadb -u root -e "SET PASSWORD FOR 'iptv_user'@'localhost' = PASSWORD('${DB_PASS}'); FLUSH PRIVILEGES;"
 
 # ── 9. Permisos ─────────────────────────────────────────────
@@ -206,12 +208,12 @@ chmod -R 755 /var/www/html
 mkdir -p /var/www/html/storage/logs /var/www/html/storage/cache
 chown -R www-data:www-data /var/www/html/storage
 
-# ── 10. Verificar symlink del socket PHP-FPM ──────────────
+# ── 10. Verificar socket PHP-FPM ───────────────────────────
 if [ -L /var/run/php/php8.2-fpm.sock ] || [ -e /var/run/php/php8.2-fpm.sock ]; then
-    info "Socket PHP-FPM OK: $(ls -l /var/run/php/php8.2-fpm.sock 2>/dev/null | awk '{print $NF}')"
+    info "Socket PHP-FPM OK"
 else
-    warn "Socket PHP-FPM no encontrado en /var/run/php/"
-    ls -la /var/run/php/ 2>/dev/null || warn "Directorio /var/run/php/ no existe"
+    warn "Socket PHP-FPM no encontrado"
+    ls -la /var/run/php/ 2>/dev/null || true
 fi
 
 # ── 11. Arrancar servicios ────────────────────────────────────
@@ -228,7 +230,7 @@ echo "=========================================="
 echo "  Verificando..."
 echo "=========================================="
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/api/info 2>/dev/null || echo "000")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/api/info" 2>/dev/null || echo "000")
 if [ "$HTTP_CODE" = "401" ]; then
     info "API respondiendo correctamente (401 = necesita X-API-Key)"
 elif [ "$HTTP_CODE" = "200" ]; then
@@ -237,7 +239,7 @@ else
     warn "API respondió código: $HTTP_CODE"
 fi
 
-curl -s http://localhost/api/info 2>/dev/null | head -c 200
+curl -s "${BASE_URL}/api/info" 2>/dev/null | head -c 200
 
 echo ""
 echo ""
@@ -245,7 +247,7 @@ echo "=========================================="
 echo -e "${GREEN}  ¡INSTALACIÓN COMPLETA!${NC}"
 echo "=========================================="
 echo ""
-echo -e "${BLUE}  URL:       ${NC}http://${SERVER_IP}/api/info"
+echo -e "${BLUE}  URL:       ${NC}${BASE_URL}/api/info"
 echo -e "${BLUE}  DB User:  ${NC}iptv_user"
 echo -e "${BLUE}  DB Pass:  ${NC}${DB_PASS}"
 echo -e "${BLUE}  Database: ${NC}iptv_manager"
