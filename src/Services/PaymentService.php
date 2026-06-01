@@ -466,16 +466,16 @@ class PaymentService
      * @param int $packageId        XUI package whose official_credits is the cost
      * @return int credits deducted (0 if package has no cost)
      */
-    private function deductResellerCredits(int $revendedorXuiId, int $packageId): int
+    private function deductResellerCredits(int $revendedorId, int $packageId): int
     {
         $db = Connection::getInstance();
 
-        // Resolve reseller row
-        $stmt = $db->prepare("SELECT * FROM `revendedores` WHERE `xui_user_id` = :id LIMIT 1");
-        $stmt->execute([':id' => $revendedorXuiId]);
+        // Accept either local id or xui_user_id — try both columns
+        $stmt = $db->prepare("SELECT * FROM `revendedores` WHERE `id` = :id OR `xui_user_id` = :id2 LIMIT 1");
+        $stmt->execute([':id' => $revendedorId, ':id2' => $revendedorId]);
         $reseller = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$reseller) {
-            throw new Exception("Reseller with xui_user_id={$revendedorXuiId} not found.");
+            throw new Exception("Reseller with id/xui_user_id={$revendedorId} not found.");
         }
 
         // Get package credit cost via admin API
