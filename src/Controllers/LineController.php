@@ -597,7 +597,7 @@ class LineController extends BaseController
      * API with the reseller's api_key. Returns the reseller row (or null if not present).
      * Each caller MUST clear the auth in a finally block.
      */
-    private function maybeUseReseller(array $input): ?array
+    private function maybeUseReseller(array $input, bool $strict = false): ?array
     {
         if (empty($input['revendedor_id'])) {
             return null;
@@ -605,10 +605,13 @@ class LineController extends BaseController
         try {
             return ResellerController::activateResellerAuth($this->xuiService, (int)$input['revendedor_id']);
         } catch (Exception $e) {
-            // Bad input from caller — return 400 with a clear message instead of bubbling up to 500.
-            $this->error($e->getMessage(), 400);
+            if ($strict) {
+                $this->error($e->getMessage(), 400);
+            }
+            // revendedor_id no existe en BD → usar auth admin como fallback
+            LoggerService::logFile("maybeUseReseller: revendedor_id=" . $input['revendedor_id'] . " no encontrado, usando auth admin. " . $e->getMessage(), "warning");
+            return null;
         }
-        return null; // unreachable (error() exits)
     }
 
     /**
@@ -743,17 +746,8 @@ class LineController extends BaseController
         $username = trim($input['username']);
 
         try {
-            // revendedor_id es opcional: si no existe en BD, usar auth admin sin fallar
-            $reseller   = null;
-            $resellerId = null;
-            if (!empty($input['revendedor_id'])) {
-                try {
-                    $reseller   = ResellerController::activateResellerAuth($this->xuiService, (int)$input['revendedor_id']);
-                    $resellerId = $reseller ? (int)$reseller['id'] : null;
-                } catch (Exception $reEx) {
-                    LoggerService::logFile("vincular-cuenta: revendedor_id=" . $input['revendedor_id'] . " no encontrado, usando auth admin. " . $reEx->getMessage(), "warning");
-                }
-            }
+            $reseller   = $this->maybeUseReseller($input);
+            $resellerId = $reseller ? (int)$reseller['id'] : null;
 
             $db = Connection::getInstance();
 
