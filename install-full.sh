@@ -62,10 +62,11 @@ mariadb --version | head -1 || fatal "MariaDB no se instaló"
 
 # ── 4. Repo y Composer ──────────────────────────────────────
 info "Clonando repo..."
-rm -rf /var/www/html/chatbot 2>/dev/null || true
+rm -rf /var/www/html
 mkdir -p /var/www/html
 cd /var/www/html
 git clone https://github.com/Zefo94/chatbot-iptv-api.git . 2>&1 | tail -3
+ls -la
 
 info "Instalando Composer..."
 curl -sS https://getcomposer.org/installer | php
@@ -73,7 +74,7 @@ mv composer.phar /usr/local/bin/composer
 chmod +x /usr/local/bin/composer
 
 info "Instalando dependencias PHP..."
-composer install --no-dev --optimize-autoloader --no-interaction 2>&1 | tail -5
+COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction 2>&1 | tail -5
 
 # ── 5. MariaDB ──────────────────────────────────────────────
 info "Configurando MariaDB..."
