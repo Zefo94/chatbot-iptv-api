@@ -58,6 +58,12 @@ service mysql stop 2>/dev/null || true
 info "Instalando paquetes..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
+apt-get install -y -qq software-properties-common > /dev/null 2>&1
+
+# PHP 8.2 desde PPA ondrej para garantizar la versión correcta
+add-apt-repository -y ppa:ondrej/php 2>&1 | tail -2
+apt-get update -qq
+
 apt-get install -y -qq \
     nginx \
     php8.2-fpm \
@@ -68,6 +74,8 @@ apt-get install -y -qq \
     php8.2-curl \
     php8.2-zip \
     php8.2-bcmath \
+    php8.2-opcache \
+    php8.2-intl \
     mariadb-server \
     mariadb-client \
     curl \
@@ -137,19 +145,25 @@ DB_PORT=3306
 DB_NAME=iptv_manager
 DB_USER=iptv_user
 DB_PASS=${DB_PASS}
-MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASS}
-XUI_API_URL=http://tripic.space/miapixui/
-XUI_API_KEY=30B0DD094F41213AB3394E374BA6A557
-XUI_RESELLER_API_URL=http://tripic.space:80/resselerapi/
-PAYPAL_CLIENT_ID=AYDaJPU1GIsJwg9yPLgll-QdBnYIqvPRr3PO-gzB0RaHVbPKUGc0qtoUFqp3q-nl-n6t1e_W3pQxIzf7
-PAYPAL_CLIENT_SECRET=ECmJk1sCytjaAhVo6nWMBzKy4LoXYJZFfAXgc7a2AytHEOgEOYVveludgyQLv5qVcmCPc8xZdIk8D0ud
+XUI_API_URL=
+XUI_API_KEY=
+XUI_USERNAME=
+XUI_PASSWORD=
+XUI_RESELLER_API_URL=
+XUI_DEFAULT_PACKAGE_ID=1
+XUI_DEFAULT_MAX_CONNECTIONS=1
+PAYPAL_CLIENT_ID=
+PAYPAL_CLIENT_SECRET=
 PAYPAL_WEBHOOK_ID=
 PAYPAL_MODE=sandbox
+PAYPAL_CURRENCY=EUR
 PAYPAL_PRICE_PER_CREDIT=10.00
+PAYPAL_RETURN_URL=http://${SERVER_IP}/pago-exitoso
+PAYPAL_CANCEL_URL=http://${SERVER_IP}/pago-cancelado
 EOF
 
-# Actualizar password real del usuario DB
-mariadb -u root << 'EOSQL'
+# BUG FIX: HEREDOC sin comillas para que ${DB_PASS} se sustituya correctamente
+mariadb -u root << EOSQL
 ALTER USER 'iptv_user'@'localhost' IDENTIFIED BY '${DB_PASS}';
 FLUSH PRIVILEGES;
 EOSQL
