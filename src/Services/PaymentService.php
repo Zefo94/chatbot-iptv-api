@@ -163,6 +163,12 @@ class PaymentService
 
             if ($captureCode === 201 && ($captureResp['status'] ?? '') === 'COMPLETED') {
                 $this->resolveRenewal($order['order_id'], 'paypal', (float)$order['monto']);
+            } elseif ($captureCode >= 400) {
+                // Capture definitively rejected — mark order failed so chatbot stops retrying
+                $issue = $captureResp['details'][0]['issue'] ?? 'CAPTURE_FAILED';
+                $db->prepare("UPDATE `ordenes` SET `estado` = 'failed' WHERE `order_id` = :oid")
+                   ->execute([':oid' => $order['order_id']]);
+                LoggerService::logFile("PayPal capture rejected, order marked failed: {$order['order_id']} ({$issue})", "warning");
             }
         }
 
