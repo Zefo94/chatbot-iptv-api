@@ -387,13 +387,48 @@ class PaymentService
             $newExpirationTimestamp = $baseTimestamp + $secondsToExtend;
             $newExpirationFormatted = date('Y-m-d H:i:s', $newExpirationTimestamp);
 
-            // 5. Update IPTV line expiration in XUI.ONE via admin auth.
-            // editLine without reseller override uses admin credentials, which do honor exp_date.
-            $xuiUpdate = $this->xuiService->editLine($lineId, [
-                'exp_date' => $newExpirationFormatted
-            ]);
+            // 5. Update expiry + auto-deduct credits.
+            // If we have a reseller, use their API key so XUI deducts credits natively
+            // (same behavior as the web panel). Fall back to admin if key unavailable.
+            $creditosDeducidos = 0;
+            $resellerApiKey = null;
+            if (!empty($order['revendedor_id'])) {
+                try {
+                    $userResp = $this->xuiService->requestAsAdmin('get_user', ['id' => (int)$order['revendedor_id']]);
+                    $userData = isset($userResp['data']) && is_array($userResp['data']) ? $userResp['data'] : [];
+                    $resellerApiKey = $userData['api_key'] ?? null;
+                } catch (Exception $e) {
+                    LoggerService::logFile("Could not fetch reseller API key: " . $e->getMessage(), "warning");
+                }
+            }
 
-            // 6. Automatically Enable/Activate the line in XUI just in case it was suspended or expired
+            $editPayload = ['exp_date' => $newExpirationFormatted];
+            if (!empty($order['package_id'])) {
+                $editPayload['package_id'] = (int)$order['package_id'];
+            }
+
+            if ($resellerApiKey) {
+                // Reseller auth → XUI auto-deducts credits natively
+                $this->xuiService->useResellerAuth($resellerApiKey);
+                try {
+                    $xuiUpdate = $this->xuiService->request('edit_line', array_merge(['id' => $lineId], $editPayload));
+                    $creditosDeducidos = -1; // deducted by XUI natively
+                } finally {
+                    $this->xuiService->clearResellerAuth();
+                }
+            } else {
+                // No reseller or key unavailable — use admin + manual deduction
+                $xuiUpdate = $this->xuiService->editLine($lineId, $editPayload);
+                if (!empty($order['revendedor_id']) && !empty($order['package_id'])) {
+                    try {
+                        $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
+                    } catch (Exception $creditEx) {
+                        LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']}: " . $creditEx->getMessage(), "warning");
+                    }
+                }
+            }
+
+            // 6. Activate line
             $this->xuiService->enableLine($lineId);
 
             // 7. Write payment transaction receipt in database
@@ -414,8 +449,8 @@ class PaymentService
 
             // 9. Update local Client state and sync new expiry date
             $clientStmt = $db->prepare("
-                UPDATE `clientes` 
-                SET `estado` = 'active', `fecha_vencimiento` = :expiry 
+                UPDATE `clientes`
+                SET `estado` = 'active', `fecha_vencimiento` = :expiry
                 WHERE `line_id` = :line_id
             ");
             $clientStmt->execute([
@@ -425,17 +460,8 @@ class PaymentService
 
             $db->commit();
 
-            // 10. Deduct reseller credits AFTER committing (non-critical — don't roll back renewal if this fails)
-            $creditosDeducidos = 0;
-            if (!empty($order['revendedor_id']) && !empty($order['package_id'])) {
-                try {
-                    $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
-                } catch (Exception $creditEx) {
-                    LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']} on order {$orderId}: " . $creditEx->getMessage(), "warning");
-                }
-            }
-
-            LoggerService::logFile("Successfully renewed Line ID: {$lineId} for {$daysToExtend} days. New expiry: {$newExpirationFormatted}. Credits deducted: {$creditosDeducidos}", "info");
+            $creditLog = $creditosDeducidos === -1 ? 'auto (reseller native)' : $creditosDeducidos;
+            LoggerService::logFile("Successfully renewed Line ID: {$lineId} for {$daysToExtend} days. New expiry: {$newExpirationFormatted}. Credits deducted: {$creditLog}", "info");
 
             // Audit action to Logs DB
             LoggerService::logAction("AUTOMATIC_LINE_RENEWAL", [
