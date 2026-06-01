@@ -66,6 +66,17 @@ rm -rf /var/www/html
 mkdir -p /var/www/html
 cd /var/www/html
 git clone https://github.com/Zefo94/chatbot-iptv-api.git . 2>&1 | tail -3
+
+# ── Patch: agregar función env() que falta en public/index.php ──
+info "Aplicando patch de env()..."
+if ! grep -q "^function env(" /var/www/html/public/index.php 2>/dev/null; then
+    sed -i '/function loadEnvironmentVariables/i\
+function env($key, $default = null) {\
+    return $_ENV[$key] ?? getenv($key) ?: $default;\
+}\
+' /var/www/html/public/index.php
+fi
+
 ls -la
 
 info "Instalando Composer..."
