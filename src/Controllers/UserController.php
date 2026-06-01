@@ -83,6 +83,69 @@ class UserController extends BaseController
     }
 
     /**
+     * Returns the account at position N for a given phone.
+     * Used by the chatbot after the user picks a number from the account list.
+     *
+     * POST /api/seleccionar-cuenta
+     * Body: { "telefono": "+57...", "indice": 2 }
+     */
+    public function seleccionarCuenta(): void
+    {
+        $input = $this->getRequestData();
+
+        $this->validate($input, [
+            'telefono' => 'required|string',
+            'indice'   => 'required|integer',
+        ]);
+
+        $phone  = trim($input['telefono']);
+        $indice = (int)$input['indice'];
+
+        if ($indice < 1) {
+            $this->error("El índice debe ser 1 o mayor.", 400);
+        }
+
+        try {
+            $db = Connection::getInstance();
+
+            $stmt = $db->prepare("
+                SELECT c.`id`, c.`telefono`, c.`username`, c.`line_id`,
+                       c.`estado`, c.`fecha_vencimiento`, c.`created_at`,
+                       r.`xui_user_id` AS revendedor_xui_id
+                FROM `clientes` c
+                LEFT JOIN `revendedores` r ON r.`id` = c.`revendedor_id`
+                WHERE c.`telefono` = :phone
+                ORDER BY c.`created_at` ASC
+                LIMIT 1 OFFSET :offset
+            ");
+            $stmt->bindValue(':phone',  $phone,        \PDO::PARAM_STR);
+            $stmt->bindValue(':offset', $indice - 1,   \PDO::PARAM_INT);
+            $stmt->execute();
+            $row = $stmt->fetch();
+
+            if (!$row) {
+                $this->error("Número {$indice} no es válido. Por favor elige un número de la lista.", 404);
+            }
+
+            $cliente = [
+                'indice'            => $indice,
+                'username'          => $row['username'],
+                'line_id'           => (int)$row['line_id'],
+                'revendedor_id'     => $row['revendedor_xui_id'] !== null ? (int)$row['revendedor_xui_id'] : null,
+                'estado'            => $row['estado'],
+                'fecha_vencimiento' => $row['fecha_vencimiento'],
+            ];
+
+            LoggerService::logFile("Cuenta seleccionada: {$phone} → índice {$indice} = {$row['username']}", "info");
+            $this->success("Cuenta seleccionada.", ['cliente' => $cliente]);
+
+        } catch (Exception $e) {
+            LoggerService::logFile("Error in seleccionarCuenta: " . $e->getMessage(), "error");
+            $this->error("Error al seleccionar la cuenta: " . $e->getMessage(), 500);
+        }
+    }
+
+    /**
      * Chatbot-friendly listing of all IPTV accounts for a given phone.
      * Returns a pre-formatted message ready to display + numbered indexes so the
      * chatbot can easily map "user typed N" to the corresponding username/line_id.

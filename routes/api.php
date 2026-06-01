@@ -8,6 +8,7 @@
 return [
     'POST' => [
         '/api/buscar-usuario'     => ['App\Controllers\UserController', 'buscar'],
+        '/api/seleccionar-cuenta' => ['App\Controllers\UserController', 'seleccionarCuenta'],
         '/api/listar-mis-lineas'  => ['App\Controllers\UserController', 'listarMisLineas'],
         '/api/consultar-linea'    => ['App\Controllers\LineController', 'consultar'],
         '/api/vincular-cuenta'    => ['App\Controllers\LineController', 'vincularCuenta'],
