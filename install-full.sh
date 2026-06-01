@@ -10,6 +10,14 @@ echo "=========================================="
 echo "  Chatbot IPTV — Instalación Completa"
 echo "=========================================="
 
+# ── Detectar IP automáticamente ───────────────────────────
+SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null \
+  || curl -s -m 5 https://api.ipify.org 2>/dev/null \
+  || hostname -I | awk '{print $1}' || echo "")
+SERVER_IP=$(echo "$SERVER_IP" | tr -d '[:space:]')
+info "IP detectada: $SERVER_IP"
+echo "=========================================="
+
 # ── 0. Limpiar locks de dpkg ────────────────────────────────
 info "Limpiando locks de dpkg..."
 rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
@@ -53,14 +61,19 @@ apt-get update -qq 2>&1 | tail -3
 
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     php8.2-fpm php8.2-mysql php8.2-cli php8.2-xml php8.2-mbstring \
-    php8.2-curl php8.2-zip php8.2-bcmath 2>&1 | tail -5
+    php8.2-curl php8.2-zip php8.2-bcmath php8.2-opcache php8.2-intl 2>&1 | tail -5
 
 # Verificar
 php -v | head -1 || fatal "PHP no se instaló"
 nginx -v 2>&1 | head -1 || fatal "Nginx no se instaló"
 mariadb --version | head -1 || fatal "MariaDB no se instaló"
 
-# ── 4. Repo y Composer ──────────────────────────────────────
+# ── 4. Timezone y límites PHP ───────────────────────────────
+info "Configurando PHP..."
+echo "date.timezone = America/Montevideo" > /etc/php/8.2/fpm/conf.d/99-timezone.ini
+echo "date.timezone = America/Montevideo" > /etc/php/8.2/cli/conf.d/99-timezone.ini
+
+# ── 5. Repo y Composer ──────────────────────────────────────
 info "Clonando repo..."
 rm -rf /var/www/html
 mkdir -p /var/www/html
@@ -87,7 +100,7 @@ chmod +x /usr/local/bin/composer
 info "Instalando dependencias PHP..."
 COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction 2>&1 | tail -5
 
-# ── 5. MariaDB ──────────────────────────────────────────────
+# ── 6. MariaDB ──────────────────────────────────────────────
 info "Configurando MariaDB..."
 service mariadb start
 
@@ -101,20 +114,20 @@ for i in $(seq 1 15); do
     sleep 1
 done
 
-# Crear DB y usuario
+# Crear DB y usuario (password temporal)
 mariadb -u root << 'EOSQL'
 CREATE DATABASE IF NOT EXISTS `iptv_manager` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS 'iptv_user'@'localhost' IDENTIFIED BY 'iptv_pass_placeholder';
+CREATE USER IF NOT EXISTS 'iptv_user'@'localhost' IDENTIFIED BY 'temp_pass_placeholder';
 GRANT ALL PRIVILEGES ON `iptv_manager`.* TO 'iptv_user'@'localhost';
 FLUSH PRIVILEGES;
 EOSQL
 
 # Importar schema
-mariadb -u iptv_user -p'iptv_pass_placeholder' iptv_manager < /var/www/html/schema.sql 2>&1 | tail -3
+mariadb -u iptv_user -p'temp_pass_placeholder' iptv_manager < /var/www/html/schema.sql 2>&1 | tail -3
 
 info "Base de datos lista"
 
-# ── 6. Nginx ────────────────────────────────────────────────
+# ── 7. Nginx ────────────────────────────────────────────────
 info "Configurando Nginx..."
 
 cat > /etc/nginx/sites-available/chatbot << 'NGINXCONF'
@@ -124,15 +137,23 @@ server {
     root /var/www/html/public;
     index index.php index.html;
     client_max_body_size 50M;
+
+    # Seguridad
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
+
     location ~ \.php$ {
         include fastcgi_params;
         fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     }
+
     location ~ /\.ht { deny all; }
 }
 NGINXCONF
@@ -140,17 +161,21 @@ NGINXCONF
 rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/chatbot /etc/nginx/sites-enabled/chatbot
 
-# ── 7. .env ──────────────────────────────────────────────────
+# ── 8. .env ──────────────────────────────────────────────────
 info "Generando .env..."
 
 CHATBOT_KEY=$(openssl rand -hex 32)
 DB_PASS=$(openssl rand -hex 20)
 MYSQL_ROOT_PASS=$(openssl rand -hex 20)
 
+# PayPal: dejar vacío para que el usuario lo complete desde el panel
+PAYPAL_CLIENT_ID_VALUE="YOUR_PAYPAL_CLIENT_ID"
+PAYPAL_CLIENT_SECRET_VALUE="YOUR_PAYPAL_CLIENT_SECRET"
+
 cat > /var/www/html/.env << EOF
 APP_ENV=production
 APP_DEBUG=false
-APP_URL=http://93.127.129.41
+APP_URL=http://${SERVER_IP}
 CHATBOT_API_KEY=${CHATBOT_KEY}
 DB_HOST=localhost
 DB_PORT=3306
@@ -161,8 +186,8 @@ MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASS}
 XUI_API_URL=http://tripic.space/miapixui/
 XUI_API_KEY=30B0DD094F41213AB3394E374BA6A557
 XUI_RESELLER_API_URL=http://tripic.space:80/resselerapi/
-PAYPAL_CLIENT_ID=AYDaJPU1GIsJwg9yPLgll-QdBnYIqvPRr3PO-gzB0RaHVbPKUGc0qtoUFqp3q-nl-n6t1e_W3pQxIzf7
-PAYPAL_CLIENT_SECRET=ECmJk1sCytjaAhVo6nWMBzKy4LoXYJZFfAXgc7a2AytHEOgEOYVveludgyQLv5qVcmCPc8xZdIk8D0ud
+PAYPAL_CLIENT_ID=${PAYPAL_CLIENT_ID_VALUE}
+PAYPAL_CLIENT_SECRET=${PAYPAL_CLIENT_SECRET_VALUE}
 PAYPAL_WEBHOOK_ID=
 PAYPAL_MODE=sandbox
 PAYPAL_PRICE_PER_CREDIT=10.00
@@ -171,25 +196,31 @@ EOF
 chown www-data:www-data /var/www/html/.env
 chmod 600 /var/www/html/.env
 
-# Actualizar password real del usuario DB
-mariadb -u root << 'EOSQL'
-ALTER USER 'iptv_user'@'localhost' IDENTIFIED BY 'iptv_pass_placeholder';
-FLUSH PRIVILEGES;
-EOSQL
+# Actualizar password real del usuario DB usando variable expandida
+info "Estableciendo password de DB..."
+mariadb -u root -e "SET PASSWORD FOR 'iptv_user'@'localhost' = PASSWORD('${DB_PASS}'); FLUSH PRIVILEGES;"
 
-# ── 8. Permisos ─────────────────────────────────────────────
+# ── 9. Permisos ─────────────────────────────────────────────
 chown -R www-data:www-data /var/www/html
 chmod -R 755 /var/www/html
 mkdir -p /var/www/html/storage/logs /var/www/html/storage/cache
 chown -R www-data:www-data /var/www/html/storage
 
-# ── 9. Arrancar servicios ────────────────────────────────────
+# ── 10. Verificar symlink del socket PHP-FPM ──────────────
+if [ -L /var/run/php/php8.2-fpm.sock ] || [ -e /var/run/php/php8.2-fpm.sock ]; then
+    info "Socket PHP-FPM OK: $(ls -l /var/run/php/php8.2-fpm.sock 2>/dev/null | awk '{print $NF}')"
+else
+    warn "Socket PHP-FPM no encontrado en /var/run/php/"
+    ls -la /var/run/php/ 2>/dev/null || warn "Directorio /var/run/php/ no existe"
+fi
+
+# ── 11. Arrancar servicios ────────────────────────────────────
 info "Arrancando servicios..."
 service php8.2-fpm restart
 service nginx restart
 service mariadb restart
 
-# ── 10. Verificar ───────────────────────────────────────────
+# ── 12. Verificar ───────────────────────────────────────────
 sleep 3
 
 echo ""
@@ -214,11 +245,13 @@ echo "=========================================="
 echo -e "${GREEN}  ¡INSTALACIÓN COMPLETA!${NC}"
 echo "=========================================="
 echo ""
-echo -e "${BLUE}  URL:       ${NC}http://93.127.129.41/api/info"
+echo -e "${BLUE}  URL:       ${NC}http://${SERVER_IP}/api/info"
 echo -e "${BLUE}  DB User:  ${NC}iptv_user"
-echo -e "${BLUE}  DB Pass:  ${NC}iptv_pass_placeholder"
+echo -e "${BLUE}  DB Pass:  ${NC}${DB_PASS}"
 echo -e "${BLUE}  Database: ${NC}iptv_manager"
 echo -e "${BLUE}  API Key:  ${NC}${CHATBOT_KEY}"
+echo ""
+echo -e "${YELLOW}  ⚠️  PayPal: configurar PAYPAL_CLIENT_ID y PAYPAL_CLIENT_SECRET en /var/www/html/.env"
 echo ""
 echo -e "${BLUE}  Comandos útiles:${NC}"
 echo "    service nginx restart"
