@@ -40,6 +40,18 @@ try {
     $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
     $requestMethod = $_SERVER['REQUEST_METHOD'];
 
+    // PayPal redirect landing pages (GET, no auth required)
+    if ($requestMethod === 'GET' && $requestUri === '/pago-exitoso') {
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pago recibido</title><style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0fdf4}div{text-align:center;padding:2rem}h1{color:#16a34a;font-size:2rem;margin-bottom:.5rem}p{color:#374151}</style></head><body><div><h1>✅ ¡Pago recibido!</h1><p>Tu pago fue procesado correctamente.</p><p>Regresa a WhatsApp y escribe <strong>confirmar</strong> para activar tu servicio.</p></div></body></html>';
+        exit;
+    }
+    if ($requestMethod === 'GET' && $requestUri === '/pago-cancelado') {
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pago cancelado</title><style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#fef2f2}div{text-align:center;padding:2rem}h1{color:#dc2626;font-size:2rem;margin-bottom:.5rem}p{color:#374151}</style></head><body><div><h1>❌ Pago cancelado</h1><p>El pago fue cancelado o no completado.</p><p>Regresa a WhatsApp si deseas intentarlo de nuevo.</p></div></body></html>';
+        exit;
+    }
+
     $routes = require dirname(__DIR__) . '/routes/api.php';
 
     // Verify Route exists
