@@ -15,17 +15,18 @@ SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null \
   || curl -s -m 5 https://api.ipify.org 2>/dev/null \
   || hostname -I | awk '{print $1}' || echo "")
 SERVER_IP=$(echo "$SERVER_IP" | tr -d '[:space:]')
+info "IP detectada: $SERVER_IP"
 
-# Si el usuario pasó un dominio como argumento, usarlo; si no, usar IP
-if [ -n "$1" ]; then
-    SERVER_DOMAIN="$1"
+# ── Pedir dominio al usuario ───────────────────────────────
+echo ""
+read -p "Dominio (ENTER para usar solo IP, ej: solucionesdigitales.icu): " SERVER_DOMAIN
+if [ -n "$SERVER_DOMAIN" ]; then
     BASE_URL="https://${SERVER_DOMAIN}"
+    info "Dominio: $SERVER_DOMAIN"
 else
     BASE_URL="http://${SERVER_IP}"
+    info "Sin dominio — usando IP"
 fi
-
-info "IP detectada: $SERVER_IP"
-info "URL base: $BASE_URL"
 echo "=========================================="
 
 # ── 0. Limpiar locks de dpkg ────────────────────────────────
