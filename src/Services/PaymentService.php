@@ -408,23 +408,23 @@ class PaymentService
             }
 
             if ($resellerApiKey) {
-                // Reseller auth → XUI auto-deducts credits natively
+                // Use reseller auth for edit_line so the line belongs to the reseller
                 $this->xuiService->useResellerAuth($resellerApiKey);
                 try {
                     $xuiUpdate = $this->xuiService->request('edit_line', array_merge(['id' => $lineId], $editPayload));
-                    $creditosDeducidos = -1; // deducted by XUI natively
                 } finally {
                     $this->xuiService->clearResellerAuth();
                 }
             } else {
-                // No reseller or key unavailable — use admin + manual deduction
                 $xuiUpdate = $this->xuiService->editLine($lineId, $editPayload);
-                if (!empty($order['revendedor_id']) && !empty($order['package_id'])) {
-                    try {
-                        $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
-                    } catch (Exception $creditEx) {
-                        LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']}: " . $creditEx->getMessage(), "warning");
-                    }
+            }
+
+            // XUI API does NOT auto-deduct credits even with reseller auth — always deduct manually
+            if (!empty($order['revendedor_id']) && !empty($order['package_id'])) {
+                try {
+                    $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
+                } catch (Exception $creditEx) {
+                    LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']}: " . $creditEx->getMessage(), "warning");
                 }
             }
 
