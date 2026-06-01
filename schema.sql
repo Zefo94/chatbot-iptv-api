@@ -60,6 +60,39 @@ CREATE TABLE `logs` (
   INDEX `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 5. Table for Resellers
+CREATE TABLE `revendedores` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `nombre` VARCHAR(100) NOT NULL,
+  `telefono` VARCHAR(20) NOT NULL,
+  `xui_user_id` INT NOT NULL UNIQUE COMMENT 'XUI.ONE reseller user ID',
+  `xui_username` VARCHAR(100) NOT NULL,
+  `xui_api_key` VARCHAR(255) NOT NULL,
+  `creditos_cache` INT NOT NULL DEFAULT 0,
+  `active` TINYINT(1) NOT NULL DEFAULT 1,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_xui_user_id` (`xui_user_id`),
+  INDEX `idx_telefono` (`telefono`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 6. Table for Credit Recharges
+CREATE TABLE `recargas` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `revendedor_id` INT NOT NULL,
+  `creditos_antes` INT NOT NULL DEFAULT 0,
+  `creditos_recargados` INT NOT NULL,
+  `creditos_despues` INT NOT NULL,
+  `nota` VARCHAR(255) NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`revendedor_id`) REFERENCES `revendedores`(`id`) ON DELETE CASCADE,
+  INDEX `idx_revendedor_id` (`revendedor_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Update clientes to add revendedor_id column
+ALTER TABLE `clientes` ADD COLUMN IF NOT EXISTS `revendedor_id` INT NULL AFTER `estado`;
+ALTER TABLE `clientes` ADD INDEX IF NOT EXISTS `idx_revendedor_id` (`revendedor_id`);
+
 -- Insert dynamic seed configurations/examples for structure verification
-INSERT INTO `logs` (`accion`, `request_json`, `response_json`) VALUES 
+INSERT INTO `logs` (`accion`, `request_json`, `response_json`) VALUES
 ('SYSTEM_INITIALIZATION', '{"status": "ready"}', '{"message": "IPTV Schema successfully initialized"}');
