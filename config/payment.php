@@ -15,7 +15,8 @@ return [
         'client_secret'    => $_ENV['PAYPAL_CLIENT_SECRET'] ?? '',
         'webhook_id'       => $_ENV['PAYPAL_WEBHOOK_ID'] ?? '',        // from PayPal developer dashboard
         'mode'             => $_ENV['PAYPAL_MODE'] ?? 'sandbox',       // sandbox or live
-        'price_per_credit' => (float)($_ENV['PAYPAL_PRICE_PER_CREDIT'] ?? 10.00), // USD per XUI credit
+        'currency'         => $_ENV['PAYPAL_CURRENCY'] ?? 'EUR',
+        'price_per_credit' => (float)($_ENV['PAYPAL_PRICE_PER_CREDIT'] ?? 10.00), // EUR per XUI credit
     ],
     'binance' => [
         'api_key'    => $_ENV['BINANCE_API_KEY'] ?? '',

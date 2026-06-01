@@ -673,7 +673,7 @@ class PaymentService
      * Create a PayPal order via Orders API v2 and return the approve URL.
      * Sandbox uses api-m.sandbox.paypal.com; live uses api-m.paypal.com.
      */
-    public function createPayPalOrder(string $orderId, float $amount, string $currency = 'USD'): array
+    public function createPayPalOrder(string $orderId, float $amount, string $currency = 'EUR'): array
     {
         $config = require dirname(__DIR__, 2) . '/config/payment.php';
         $clientId     = $config['paypal']['client_id']     ?? '';
