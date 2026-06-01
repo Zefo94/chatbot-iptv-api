@@ -743,8 +743,17 @@ class LineController extends BaseController
         $username = trim($input['username']);
 
         try {
-            $reseller   = $this->maybeUseReseller($input);
-            $resellerId = $reseller ? (int)$reseller['id'] : null;
+            // revendedor_id es opcional: si no existe en BD, usar auth admin sin fallar
+            $reseller   = null;
+            $resellerId = null;
+            if (!empty($input['revendedor_id'])) {
+                try {
+                    $reseller   = ResellerController::activateResellerAuth($this->xuiService, (int)$input['revendedor_id']);
+                    $resellerId = $reseller ? (int)$reseller['id'] : null;
+                } catch (Exception $reEx) {
+                    LoggerService::logFile("vincular-cuenta: revendedor_id=" . $input['revendedor_id'] . " no encontrado, usando auth admin. " . $reEx->getMessage(), "warning");
+                }
+            }
 
             $db = Connection::getInstance();
 
