@@ -814,10 +814,9 @@ class LineController extends BaseController
             // Se ignora el caché local para verificar propiedad; la BD puede tener
             // datos sucios (revendedor_id NULL o asignado incorrectamente).
             if ($resellerId !== null) {
-                // findLineByUsername usa las credenciales del revendedor (activadas por
-                // maybeUseReseller). El API de revendedor en XUI solo devuelve cuentas
-                // que le pertenecen, así que si no encuentra el username → no es suyo.
-                $xuiData = $this->xuiService->findLineByUsername($username);
+                // findLineByUsername con $listOnly=true: salta la Estrategia A (get_user/get_line)
+                // que XUI One NO scopea por revendedor y busca solo en la lista scopeada del revendedor.
+                $xuiData = $this->xuiService->findLineByUsername($username, true);
 
                 if (empty($xuiData)) {
                     $this->error("La cuenta '{$username}' no existe en XUI o no pertenece a tu revendedor.", 403);

@@ -195,7 +195,14 @@ class XuiService
      * Tries multiple XUI.ONE action conventions because different panel versions expose different names.
      * Returns the line payload (with id/line_id + exp_date + max_connections, etc.) or null if not found.
      */
-    public function findLineByUsername(string $username): ?array
+    /**
+     * @param bool $listOnly  When true, skips the direct single-user lookup (Strategy A) and goes
+     *                        straight to the list-based search (Strategy B). Use this whenever the
+     *                        XuiService is in reseller-auth mode: XUI One's single-user actions
+     *                        (get_user, get_line) do NOT scope by reseller and will return any account
+     *                        regardless of ownership, while the list actions (get_lines) ARE scoped.
+     */
+    public function findLineByUsername(string $username, bool $listOnly = false): ?array
     {
         $username = trim($username);
         if ($username === '') {
@@ -205,24 +212,27 @@ class XuiService
         // Strategy A: direct lookup by username (cheapest if supported).
         // CRITICAL: verify the returned username matches — some panel actions ignore the parameter
         // and return the API user (e.g. admin), which would otherwise produce a false positive.
-        foreach (['get_line', 'get_user', 'user_info', 'get_info'] as $action) {
-            try {
-                $response = $this->request($action, ['username' => $username]);
-                $data = isset($response['data']) && is_array($response['data']) ? $response['data'] : $response;
-                if (!is_array($data)) {
-                    continue;
+        // SKIP when $listOnly = true (reseller context): these actions are not scoped by reseller in XUI.
+        if (!$listOnly) {
+            foreach (['get_line', 'get_user', 'user_info', 'get_info'] as $action) {
+                try {
+                    $response = $this->request($action, ['username' => $username]);
+                    $data = isset($response['data']) && is_array($response['data']) ? $response['data'] : $response;
+                    if (!is_array($data)) {
+                        continue;
+                    }
+                    $returnedUsername = isset($data['username']) ? (string)$data['username'] : '';
+                    $hasId = !empty($data['id']) || !empty($data['line_id']);
+                    if ($hasId && strcasecmp($returnedUsername, $username) === 0) {
+                        LoggerService::logFile("findLineByUsername: matched '{$username}' via direct action '{$action}'", "info");
+                        return $data;
+                    }
+                    if ($hasId && $returnedUsername !== '') {
+                        LoggerService::logFile("findLineByUsername: direct action '{$action}' ignored username param (returned '{$returnedUsername}' instead of '{$username}')", "debug");
+                    }
+                } catch (Exception $e) {
+                    LoggerService::logFile("findLineByUsername: direct action '{$action}' failed: " . $e->getMessage(), "debug");
                 }
-                $returnedUsername = isset($data['username']) ? (string)$data['username'] : '';
-                $hasId = !empty($data['id']) || !empty($data['line_id']);
-                if ($hasId && strcasecmp($returnedUsername, $username) === 0) {
-                    LoggerService::logFile("findLineByUsername: matched '{$username}' via direct action '{$action}'", "info");
-                    return $data;
-                }
-                if ($hasId && $returnedUsername !== '') {
-                    LoggerService::logFile("findLineByUsername: direct action '{$action}' ignored username param (returned '{$returnedUsername}' instead of '{$username}')", "debug");
-                }
-            } catch (Exception $e) {
-                LoggerService::logFile("findLineByUsername: direct action '{$action}' failed: " . $e->getMessage(), "debug");
             }
         }
 
