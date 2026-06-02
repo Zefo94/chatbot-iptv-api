@@ -26,17 +26,27 @@ class UserController extends BaseController
      */
     private function fetchResellerUsernamesFromXui(array $reseller): ?array
     {
+        // Usa credenciales admin + filtra por member_id (campo que XUI One establece
+        // en cada línea para indicar a qué revendedor pertenece).
+        // La resselerapi devuelve get_lines vacío porque las líneas se crearon vía admin.
         try {
-            $this->xuiService->useResellerAuth($reseller['xui_api_key']);
+            $memberId = (string)($reseller['xui_user_id'] ?? '');
+            if ($memberId === '') return null;
+
             $xuiUsernames = [];
-            foreach (['get_lines', 'list_lines', 'get_users', 'list_users'] as $action) {
+            foreach (['get_lines', 'get_users'] as $action) {
                 try {
-                    $resp  = $this->xuiService->request($action, ['limit' => 50000]);
+                    $resp  = $this->xuiService->requestAsAdmin($action, [
+                        'member_id' => $memberId,
+                        'limit'     => 50000,
+                    ]);
                     $items = isset($resp['data']) && is_array($resp['data']) ? $resp['data'] : $resp;
                     if (!is_array($items) || empty($items)) continue;
-                    // Verify it's actually a list (not a single-item response)
                     if (isset($items['username'])) { $items = [$items]; }
                     foreach ($items as $item) {
+                        // Filtro client-side por si XUI ignora el parámetro member_id
+                        $itemMember = isset($item['member_id']) ? (string)$item['member_id'] : null;
+                        if ($itemMember !== $memberId) continue;
                         if (!empty($item['username'])) {
                             $xuiUsernames[] = strtolower((string)$item['username']);
                         }
@@ -50,8 +60,6 @@ class UserController extends BaseController
         } catch (Exception $e) {
             LoggerService::logFile("fetchResellerUsernames: XUI call failed: " . $e->getMessage(), "warning");
             return null;
-        } finally {
-            $this->xuiService->clearResellerAuth();
         }
     }
     /**
