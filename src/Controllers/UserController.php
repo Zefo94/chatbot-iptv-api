@@ -26,24 +26,37 @@ class UserController extends BaseController
         ]);
 
         $phone = trim($input['telefono']);
+        $resellerXuiId = isset($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
 
         try {
             $db = Connection::getInstance();
 
-            // Multi-line per phone is supported (one customer can have several IPTV accounts).
-            // LEFT JOIN to surface the reseller's xui_user_id (what the chatbot uses) instead
-            // of the internal local PK.
-            $stmt = $db->prepare("
+            // Resolve optional reseller filter (input is xui_user_id, FK in clientes is local id)
+            $resellerLocalId = null;
+            if ($resellerXuiId !== null) {
+                $reseller = \App\Controllers\ResellerController::findResellerByEitherId($resellerXuiId);
+                if ($reseller) {
+                    $resellerLocalId = (int)$reseller['id'];
+                }
+            }
+
+            $sql = "
                 SELECT c.`id`, c.`telefono`, c.`username`, c.`line_id`,
                        c.`estado`, c.`fecha_vencimiento`, c.`created_at`,
                        r.`xui_user_id` AS revendedor_xui_id
                 FROM `clientes` c
                 LEFT JOIN `revendedores` r ON r.`id` = c.`revendedor_id`
                 WHERE c.`telefono` = :phone
-                ORDER BY c.`created_at` DESC
-            ");
+            ";
+            $params = [':phone' => $phone];
+            if ($resellerLocalId !== null) {
+                $sql .= " AND c.`revendedor_id` = :rid";
+                $params[':rid'] = $resellerLocalId;
+            }
+            $sql .= " ORDER BY c.`created_at` DESC";
 
-            $stmt->execute([':phone' => $phone]);
+            $stmt = $db->prepare($sql);
+            $stmt->execute($params);
             $rows = $stmt->fetchAll();
 
             if (empty($rows)) {
@@ -100,6 +113,7 @@ class UserController extends BaseController
 
         $phone  = trim($input['telefono']);
         $indice = (int)$input['indice'];
+        $resellerXuiId = isset($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
 
         if ($indice < 1) {
             $this->error("El índice debe ser 1 o mayor.", 400);
@@ -108,18 +122,35 @@ class UserController extends BaseController
         try {
             $db = Connection::getInstance();
 
-            $stmt = $db->prepare("
+            // Resolve optional reseller filter
+            $resellerLocalId = null;
+            if ($resellerXuiId !== null) {
+                $reseller = \App\Controllers\ResellerController::findResellerByEitherId($resellerXuiId);
+                if ($reseller) {
+                    $resellerLocalId = (int)$reseller['id'];
+                }
+            }
+
+            $sql = "
                 SELECT c.`id`, c.`telefono`, c.`username`, c.`line_id`,
                        c.`estado`, c.`fecha_vencimiento`, c.`created_at`,
                        r.`xui_user_id` AS revendedor_xui_id
                 FROM `clientes` c
                 LEFT JOIN `revendedores` r ON r.`id` = c.`revendedor_id`
                 WHERE c.`telefono` = :phone
-                ORDER BY c.`created_at` ASC
-                LIMIT 1 OFFSET :offset
-            ");
-            $stmt->bindValue(':phone',  $phone,        \PDO::PARAM_STR);
-            $stmt->bindValue(':offset', $indice - 1,   \PDO::PARAM_INT);
+            ";
+            $params = [':phone' => $phone];
+            if ($resellerLocalId !== null) {
+                $sql .= " AND c.`revendedor_id` = :rid";
+                $params[':rid'] = $resellerLocalId;
+            }
+            $sql .= " ORDER BY c.`created_at` ASC LIMIT 1 OFFSET :offset";
+
+            $stmt = $db->prepare($sql);
+            foreach ($params as $k => $v) {
+                $stmt->bindValue($k, $v, \PDO::PARAM_STR);
+            }
+            $stmt->bindValue(':offset', $indice - 1, \PDO::PARAM_INT);
             $stmt->execute();
             $row = $stmt->fetch();
 

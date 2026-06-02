@@ -639,22 +639,44 @@ class LineController extends BaseController
      */
     private function resolveLineId(array $input): array
     {
+        $db = Connection::getInstance();
+
+        // Resolve by explicit line_id — still enforce ownership below
         if (!empty($input['line_id'])) {
-            return ['line_id' => (int)$input['line_id'], 'xui_data' => null];
+            $lineId = (int)$input['line_id'];
+            if (!empty($input['revendedor_id'])) {
+                $reseller = ResellerController::findResellerByEitherId((int)$input['revendedor_id']);
+                if ($reseller) {
+                    $chk = $db->prepare("SELECT `revendedor_id` FROM `clientes` WHERE `line_id` = :lid LIMIT 1");
+                    $chk->execute([':lid' => $lineId]);
+                    $row = $chk->fetch();
+                    if ($row && $row['revendedor_id'] !== null && (int)$row['revendedor_id'] !== (int)$reseller['id']) {
+                        $this->error("No tienes permiso para acceder a esta línea.", 403);
+                    }
+                }
+            }
+            return ['line_id' => $lineId, 'xui_data' => null];
         }
+
         if (empty($input['username'])) {
             $this->error("Debes proporcionar 'line_id' o 'username'.", 400);
         }
 
         $username = trim((string)$input['username']);
         $providedPhone = isset($input['telefono']) ? trim((string)$input['telefono']) : '';
-        $db = Connection::getInstance();
 
         $stmt = $db->prepare("SELECT `line_id`, `telefono`, `revendedor_id` FROM `clientes` WHERE `username` = :user LIMIT 1");
         $stmt->execute([':user' => $username]);
         $client = $stmt->fetch();
 
         if ($client) {
+            // Verify the requesting reseller owns this client
+            if (!empty($input['revendedor_id']) && $client['revendedor_id'] !== null) {
+                $reseller = ResellerController::findResellerByEitherId((int)$input['revendedor_id']);
+                if ($reseller && (int)$client['revendedor_id'] !== (int)$reseller['id']) {
+                    $this->error("No tienes permiso para acceder a esta línea.", 403);
+                }
+            }
             $this->upgradePlaceholderPhone($db, $username, $client['telefono'] ?? '', $providedPhone);
             // Patch missing revendedor_id if we now know which reseller owns this client
             if ($client['revendedor_id'] === null && !empty($input['revendedor_id'])) {
@@ -766,6 +788,11 @@ class LineController extends BaseController
             $existing = $stmt->fetch(\PDO::FETCH_ASSOC);
 
             if ($existing) {
+                // Verify ownership: reseller can only access their own clients
+                if ($resellerId !== null && $existing['revendedor_id'] !== null &&
+                    (int)$existing['revendedor_id'] !== $resellerId) {
+                    $this->error("Esta cuenta IPTV pertenece a otro revendedor. No puedes vincularla.", 403);
+                }
                 // Ya existe — actualizar teléfono si cambió y devolver datos
                 if ($existing['telefono'] !== $phone) {
                     $db->prepare("UPDATE `clientes` SET `telefono` = :phone WHERE `username` = :user")
@@ -788,7 +815,14 @@ class LineController extends BaseController
                 return;
             }
 
-            // 2. Buscar en XUI por username
+            // 2. Bloquear si username coincide con un revendedor registrado
+            $resellerCheck = $db->prepare("SELECT id FROM `revendedores` WHERE LOWER(`xui_username`) = LOWER(:user) LIMIT 1");
+            $resellerCheck->execute([':user' => $username]);
+            if ($resellerCheck->fetch()) {
+                $this->error("El usuario '{$username}' es un revendedor y no puede ser vinculado como línea de cliente.", 403);
+            }
+
+            // 3. Buscar en XUI por username
             $xuiData = $this->xuiService->findLineByUsername($username);
 
             if (empty($xuiData)) {
