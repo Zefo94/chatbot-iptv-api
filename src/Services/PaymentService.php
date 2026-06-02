@@ -387,27 +387,12 @@ class PaymentService
             $newExpirationTimestamp = $baseTimestamp + $secondsToExtend;
             $newExpirationFormatted = date('Y-m-d H:i:s', $newExpirationTimestamp);
 
-            // 5. Update expiry + auto-deduct credits.
-            // If we have a reseller, use their API key so XUI deducts credits natively
-            // (same behavior as the web panel). Fall back to admin if key unavailable.
+            // 5. Update expiry via admin API — resselerapi ignora silenciosamente exp_date.
             $creditosDeducidos = 0;
-            $resellerApiKey = null;
-            if (!empty($order['revendedor_id'])) {
-                try {
-                    $userResp = $this->xuiService->requestAsAdmin('get_user', ['id' => (int)$order['revendedor_id']]);
-                    $userData = isset($userResp['data']) && is_array($userResp['data']) ? $userResp['data'] : [];
-                    $resellerApiKey = $userData['api_key'] ?? null;
-                } catch (Exception $e) {
-                    LoggerService::logFile("Could not fetch reseller API key: " . $e->getMessage(), "warning");
-                }
-            }
-
             $editPayload = ['exp_date' => $newExpirationFormatted];
             if (!empty($order['package_id'])) {
                 $editPayload['package_id'] = (int)$order['package_id'];
             }
-
-            // Siempre admin para edit_line: la resselerapi ignora silenciosamente exp_date.
             $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
 
             // XUI API does NOT auto-deduct credits even with reseller auth — always deduct manually
