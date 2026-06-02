@@ -798,7 +798,10 @@ class LineController extends BaseController
         $username = trim($input['username']);
 
         try {
-            $reseller   = $this->maybeUseReseller($input);
+            // Modo estricto: si viene revendedor_id pero no existe en BD → error 400.
+            // NUNCA hacer fallback a admin cuando se provee revendedor_id; eso bypasearía
+            // todos los chequeos de propiedad.
+            $reseller   = $this->maybeUseReseller($input, !empty($input['revendedor_id']));
             $resellerId = $reseller ? (int)$reseller['id'] : null;
 
             $db = Connection::getInstance();
