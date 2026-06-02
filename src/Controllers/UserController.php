@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Database\Connection;
 use App\Services\LoggerService;
+use App\Services\XuiService;
 use Exception;
 
 /**
@@ -11,6 +12,48 @@ use Exception;
  */
 class UserController extends BaseController
 {
+    private XuiService $xuiService;
+
+    public function __construct()
+    {
+        $this->xuiService = new XuiService();
+    }
+
+    /**
+     * Obtiene todos los usernames que pertenecen a un revendedor según XUI.
+     * Devuelve un Set (array_flip) de usernames en minúsculas para búsqueda O(1),
+     * o null si la llamada a XUI falla (el caller hace fallback a solo BD).
+     */
+    private function fetchResellerUsernamesFromXui(array $reseller): ?array
+    {
+        try {
+            $this->xuiService->useResellerAuth($reseller['xui_api_key']);
+            $xuiUsernames = [];
+            foreach (['get_lines', 'list_lines', 'get_users', 'list_users'] as $action) {
+                try {
+                    $resp  = $this->xuiService->request($action, ['limit' => 50000]);
+                    $items = isset($resp['data']) && is_array($resp['data']) ? $resp['data'] : $resp;
+                    if (!is_array($items) || empty($items)) continue;
+                    // Verify it's actually a list (not a single-item response)
+                    if (isset($items['username'])) { $items = [$items]; }
+                    foreach ($items as $item) {
+                        if (!empty($item['username'])) {
+                            $xuiUsernames[] = strtolower((string)$item['username']);
+                        }
+                    }
+                    if (!empty($xuiUsernames)) break;
+                } catch (Exception $e) {
+                    LoggerService::logFile("fetchResellerUsernames: action {$action} failed: " . $e->getMessage(), "debug");
+                }
+            }
+            return !empty($xuiUsernames) ? array_flip($xuiUsernames) : null;
+        } catch (Exception $e) {
+            LoggerService::logFile("fetchResellerUsernames: XUI call failed: " . $e->getMessage(), "warning");
+            return null;
+        } finally {
+            $this->xuiService->clearResellerAuth();
+        }
+    }
     /**
      * Finds active client mapping by phone number
      * 
@@ -58,6 +101,14 @@ class UserController extends BaseController
             $stmt = $db->prepare($sql);
             $stmt->execute($params);
             $rows = $stmt->fetchAll();
+
+            // Si hay revendedor, cruzar con XUI para descartar cuentas con asignación incorrecta en BD
+            if ($resellerLocalId !== null && isset($reseller) && !empty($rows)) {
+                $xuiSet = $this->fetchResellerUsernamesFromXui($reseller);
+                if ($xuiSet !== null) {
+                    $rows = array_values(array_filter($rows, fn($r) => isset($xuiSet[strtolower($r['username'])])));
+                }
+            }
 
             if (empty($rows)) {
                 LoggerService::logFile("Phone lookup failed: {$phone}. Client not registered.", "info");
@@ -229,6 +280,14 @@ class UserController extends BaseController
             $stmt = $db->prepare($sql);
             $stmt->execute($params);
             $rows = $stmt->fetchAll();
+
+            // Cruzar con XUI para eliminar cuentas con revendedor_id incorrecto en BD
+            if ($resellerLocalId !== null && isset($reseller) && !empty($rows)) {
+                $xuiSet = $this->fetchResellerUsernamesFromXui($reseller);
+                if ($xuiSet !== null) {
+                    $rows = array_values(array_filter($rows, fn($r) => isset($xuiSet[strtolower($r['username'])])));
+                }
+            }
 
             $total = count($rows);
 
