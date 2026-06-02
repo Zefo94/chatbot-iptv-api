@@ -407,17 +407,8 @@ class PaymentService
                 $editPayload['package_id'] = (int)$order['package_id'];
             }
 
-            if ($resellerApiKey) {
-                // Use reseller auth for edit_line so the line belongs to the reseller
-                $this->xuiService->useResellerAuth($resellerApiKey);
-                try {
-                    $xuiUpdate = $this->xuiService->request('edit_line', array_merge(['id' => $lineId], $editPayload));
-                } finally {
-                    $this->xuiService->clearResellerAuth();
-                }
-            } else {
-                $xuiUpdate = $this->xuiService->editLine($lineId, $editPayload);
-            }
+            // Siempre admin para edit_line: la resselerapi ignora silenciosamente exp_date.
+            $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
 
             // XUI API does NOT auto-deduct credits even with reseller auth — always deduct manually
             if (!empty($order['revendedor_id']) && !empty($order['package_id'])) {
