@@ -671,10 +671,29 @@ class LineController extends BaseController
 
         if ($client) {
             // Verify the requesting reseller owns this client
-            if (!empty($input['revendedor_id']) && $client['revendedor_id'] !== null) {
+            if (!empty($input['revendedor_id'])) {
                 $reseller = ResellerController::findResellerByEitherId((int)$input['revendedor_id']);
-                if ($reseller && (int)$client['revendedor_id'] !== (int)$reseller['id']) {
-                    $this->error("No tienes permiso para acceder a esta línea.", 403);
+                if ($reseller) {
+                    if ($client['revendedor_id'] !== null && (int)$client['revendedor_id'] !== (int)$reseller['id']) {
+                        // BD dice que pertenece a otro revendedor → bloquear
+                        $this->error("No tienes permiso para acceder a esta línea.", 403);
+                    }
+                    if ($client['revendedor_id'] === null) {
+                        // BD no tiene revendedor asignado — verificar en XUI con credenciales del revendedor
+                        $this->xuiService->useResellerAuth($reseller['xui_api_key']);
+                        $xuiCheck = null;
+                        try {
+                            $xuiCheck = $this->xuiService->findLineByUsername($username ?? '');
+                        } finally {
+                            $this->xuiService->clearResellerAuth();
+                        }
+                        if (!$xuiCheck) {
+                            $this->error("No tienes permiso para acceder a esta línea.", 403);
+                        }
+                        // Corregir el revendedor_id en BD para consultas futuras
+                        $db->prepare("UPDATE `clientes` SET `revendedor_id` = :rid WHERE `username` = :user AND `revendedor_id` IS NULL")
+                           ->execute([':rid' => (int)$reseller['id'], ':user' => $username ?? '']);
+                    }
                 }
             }
             $this->upgradePlaceholderPhone($db, $username, $client['telefono'] ?? '', $providedPhone);
@@ -759,7 +778,9 @@ class LineController extends BaseController
 
     /**
      * Verifica un username en XUI y lo vincula automáticamente al número de WhatsApp.
-     * Si ya está vinculado, devuelve los datos existentes.
+     *
+     * Cuando se provee revendedor_id, XUI ONE es la fuente de verdad para la propiedad:
+     * se consulta XUI con las credenciales del revendedor — si no lo encuentra, no le pertenece.
      *
      * POST /api/vincular-cuenta
      * Body: { "telefono": "+57...", "username": "mi_usuario_iptv", "revendedor_id": 17 }
@@ -782,24 +803,100 @@ class LineController extends BaseController
 
             $db = Connection::getInstance();
 
-            // 1. ¿Ya está vinculado este username a otro teléfono?
+            // Bloquear siempre si el username es un revendedor registrado
+            $resellerCheck = $db->prepare("SELECT id FROM `revendedores` WHERE LOWER(`xui_username`) = LOWER(:user) LIMIT 1");
+            $resellerCheck->execute([':user' => $username]);
+            if ($resellerCheck->fetch()) {
+                $this->error("El usuario '{$username}' es un revendedor y no puede ser vinculado como línea de cliente.", 403);
+            }
+
+            // ── Contexto REVENDEDOR: XUI es la fuente de verdad ──────────────────
+            // Se ignora el caché local para verificar propiedad; la BD puede tener
+            // datos sucios (revendedor_id NULL o asignado incorrectamente).
+            if ($resellerId !== null) {
+                // findLineByUsername usa las credenciales del revendedor (activadas por
+                // maybeUseReseller). El API de revendedor en XUI solo devuelve cuentas
+                // que le pertenecen, así que si no encuentra el username → no es suyo.
+                $xuiData = $this->xuiService->findLineByUsername($username);
+
+                if (empty($xuiData)) {
+                    $this->error("La cuenta '{$username}' no existe en XUI o no pertenece a tu revendedor.", 403);
+                }
+
+                $target = isset($xuiData['data']) ? $xuiData['data'] : $xuiData;
+                $lineId = (int)($target['id'] ?? $target['line_id'] ?? 0);
+                if ($lineId === 0) {
+                    $this->error("No se pudo obtener el ID de línea para '{$username}'.", 500);
+                }
+
+                $exp = $target['exp_date'] ?? null;
+                if (is_numeric($exp) && (int)$exp >= 2147483647) {
+                    $expiryFormatted = 'Nunca (Ilimitada)';
+                    $expiryDb        = '2099-12-31 23:59:59';
+                } else {
+                    $expiryDb = $expiryFormatted = is_numeric($exp)
+                        ? date('Y-m-d H:i:s', (int)$exp)
+                        : ($exp ?? date('Y-m-d H:i:s', strtotime('+30 days')));
+                }
+                $enabled = (bool)($target['enabled'] ?? true);
+                $estado  = $enabled ? 'active' : 'suspended';
+
+                // Upsert en BD: actualizar si existe (corrigiendo revendedor_id si estaba mal),
+                // insertar si no. Así el caché queda siempre consistente con XUI.
+                $stmtEx = $db->prepare("SELECT id, telefono FROM `clientes` WHERE `username` = :user LIMIT 1");
+                $stmtEx->execute([':user' => $username]);
+                $existing = $stmtEx->fetch(\PDO::FETCH_ASSOC);
+
+                if ($existing) {
+                    $db->prepare("
+                        UPDATE `clientes`
+                        SET `telefono` = :phone, `revendedor_id` = :rid,
+                            `estado` = :estado, `fecha_vencimiento` = :exp
+                        WHERE `username` = :user
+                    ")->execute([':phone' => $phone, ':rid' => $resellerId,
+                                 ':estado' => $estado, ':exp' => $expiryDb, ':user' => $username]);
+                    $yaExistia = true;
+                } else {
+                    $db->prepare("
+                        INSERT INTO `clientes`
+                            (`telefono`, `username`, `line_id`, `revendedor_id`, `estado`, `fecha_vencimiento`, `created_at`)
+                        VALUES (:phone, :username, :line_id, :rid, :estado, :expiry, NOW())
+                    ")->execute([':phone' => $phone, ':username' => $username, ':line_id' => $lineId,
+                                 ':rid' => $resellerId, ':estado' => $estado, ':expiry' => $expiryDb]);
+                    $yaExistia = false;
+                }
+
+                LoggerService::logAction("VINCULAR_CUENTA", $input, [
+                    'username' => $username, 'line_id' => $lineId, 'ya_existia' => $yaExistia,
+                ]);
+
+                $prefix = $yaExistia ? "📺" : "✅ Cuenta vinculada exitosamente.\n\n📺";
+                $this->json([
+                    'success'           => true,
+                    'vinculado'         => true,
+                    'ya_existia'        => $yaExistia,
+                    'username'          => $username,
+                    'line_id'           => $lineId,
+                    'telefono'          => $phone,
+                    'estado'            => $estado,
+                    'fecha_vencimiento' => $expiryFormatted,
+                    'message'           => "{$prefix} *{$username}*\n📅 Vence: {$expiryFormatted}\n⚡ " . ($enabled ? 'Activo 🟢' : 'Suspendido 🔴'),
+                ]);
+                return;
+            }
+
+            // ── Contexto ADMIN (sin revendedor_id): lógica original ───────────────
             $stmt = $db->prepare("SELECT * FROM `clientes` WHERE `username` = :user LIMIT 1");
             $stmt->execute([':user' => $username]);
             $existing = $stmt->fetch(\PDO::FETCH_ASSOC);
 
             if ($existing) {
-                // Verify ownership: reseller can only access their own clients
-                if ($resellerId !== null && $existing['revendedor_id'] !== null &&
-                    (int)$existing['revendedor_id'] !== $resellerId) {
-                    $this->error("Esta cuenta IPTV pertenece a otro revendedor. No puedes vincularla.", 403);
-                }
-                // Ya existe — actualizar teléfono si cambió y devolver datos
                 if ($existing['telefono'] !== $phone) {
                     $db->prepare("UPDATE `clientes` SET `telefono` = :phone WHERE `username` = :user")
                        ->execute([':phone' => $phone, ':user' => $username]);
                     $existing['telefono'] = $phone;
                 }
-                $exp = $existing['fecha_vencimiento'];
+                $exp     = $existing['fecha_vencimiento'];
                 $enabled = ($existing['estado'] === 'active');
                 $this->json([
                     'success'           => true,
@@ -815,23 +912,13 @@ class LineController extends BaseController
                 return;
             }
 
-            // 2. Bloquear si username coincide con un revendedor registrado
-            $resellerCheck = $db->prepare("SELECT id FROM `revendedores` WHERE LOWER(`xui_username`) = LOWER(:user) LIMIT 1");
-            $resellerCheck->execute([':user' => $username]);
-            if ($resellerCheck->fetch()) {
-                $this->error("El usuario '{$username}' es un revendedor y no puede ser vinculado como línea de cliente.", 403);
-            }
-
-            // 3. Buscar en XUI por username
             $xuiData = $this->xuiService->findLineByUsername($username);
-
             if (empty($xuiData)) {
                 $this->error("No encontré el usuario '{$username}' en el sistema IPTV. Verifica que sea correcto.", 404);
             }
 
             $target = isset($xuiData['data']) ? $xuiData['data'] : $xuiData;
             $lineId = (int)($target['id'] ?? $target['line_id'] ?? 0);
-
             if ($lineId === 0) {
                 $this->error("No se pudo obtener el ID de línea para '{$username}'.", 500);
             }
@@ -839,25 +926,26 @@ class LineController extends BaseController
             $exp = $target['exp_date'] ?? null;
             if (is_numeric($exp) && (int)$exp >= 2147483647) {
                 $expiryFormatted = 'Nunca (Ilimitada)';
-                $expiryDb = '2099-12-31 23:59:59';
+                $expiryDb        = '2099-12-31 23:59:59';
             } else {
-                $expiryDb = $expiryFormatted = is_numeric($exp) ? date('Y-m-d H:i:s', (int)$exp) : ($exp ?? date('Y-m-d H:i:s', strtotime('+30 days')));
+                $expiryDb = $expiryFormatted = is_numeric($exp)
+                    ? date('Y-m-d H:i:s', (int)$exp)
+                    : ($exp ?? date('Y-m-d H:i:s', strtotime('+30 days')));
             }
-
             $enabled = (bool)($target['enabled'] ?? true);
             $estado  = $enabled ? 'active' : 'suspended';
 
-            // 3. Registrar en clientes
             $db->prepare("
-                INSERT INTO `clientes` (`telefono`, `username`, `line_id`, `revendedor_id`, `estado`, `fecha_vencimiento`, `created_at`)
+                INSERT INTO `clientes`
+                    (`telefono`, `username`, `line_id`, `revendedor_id`, `estado`, `fecha_vencimiento`, `created_at`)
                 VALUES (:phone, :username, :line_id, :revendedor_id, :estado, :expiry, NOW())
             ")->execute([
-                ':phone'        => $phone,
-                ':username'     => $username,
-                ':line_id'      => $lineId,
-                ':revendedor_id'=> $resellerId,
-                ':estado'       => $estado,
-                ':expiry'       => $expiryDb,
+                ':phone'         => $phone,
+                ':username'      => $username,
+                ':line_id'       => $lineId,
+                ':revendedor_id' => null,
+                ':estado'        => $estado,
+                ':expiry'        => $expiryDb,
             ]);
 
             LoggerService::logAction("VINCULAR_CUENTA", $input, ['username' => $username, 'line_id' => $lineId]);
