@@ -284,45 +284,59 @@ else
     SSH_KEY_PATH="/root/.ssh/chatbot_deploy_key"
     mkdir -p /root/.ssh && chmod 700 /root/.ssh
 
-    # Revisar si hay claves existentes que podrían servir
-    FOUND_KEYS=$(find /root/.ssh -name "*.pub" 2>/dev/null | grep -v "chatbot_deploy_key" || true)
+    # Buscar TODAS las claves existentes, incluida chatbot_deploy_key
+    FOUND_KEYS=$(find /root/.ssh -name "*.pub" 2>/dev/null || true)
     if [[ -n "$FOUND_KEYS" ]]; then
       echo ""
-      warn "Se encontraron estas claves SSH existentes en el servidor:"
-      echo "$FOUND_KEYS" | while read -r k; do echo "    $k"; done
+      info "Se encontraron estas claves SSH en el servidor:"
+      i_key=1
+      while IFS= read -r k; do
+        echo -e "  ${CYAN}${i_key})${NC} ${k}"
+        i_key=$((i_key+1))
+      done <<< "$FOUND_KEYS"
+      echo -e "  ${CYAN}${i_key})${NC} Generar una clave nueva"
       echo ""
-      ask "¿Quieres usar alguna de esas claves existentes? Escribe la ruta (sin .pub) o Enter para generar una nueva:"
-      read -r EXISTING_KEY_PATH
-      if [[ -n "$EXISTING_KEY_PATH" ]] && [[ -f "$EXISTING_KEY_PATH" ]]; then
-        SSH_KEY_PATH="$EXISTING_KEY_PATH"
-        log "Usando clave existente: $SSH_KEY_PATH"
-        # Verificar si ya está en GitHub
+      ask "¿Cuál usar? Escribe el número o la ruta completa (sin .pub):"
+      read -r KEY_CHOICE
+
+      # Si eligió un número, convertir a ruta
+      if [[ "$KEY_CHOICE" =~ ^[0-9]+$ ]]; then
+        TOTAL_KEYS=$(echo "$FOUND_KEYS" | wc -l)
+        if [[ "$KEY_CHOICE" -le "$TOTAL_KEYS" ]]; then
+          CHOSEN_PUB=$(echo "$FOUND_KEYS" | sed -n "${KEY_CHOICE}p")
+          KEY_CHOICE="${CHOSEN_PUB%.pub}"
+        else
+          KEY_CHOICE=""  # eligió "Generar nueva"
+        fi
+      fi
+
+      if [[ -n "$KEY_CHOICE" ]] && [[ -f "$KEY_CHOICE" ]]; then
+        SSH_KEY_PATH="$KEY_CHOICE"
+        log "Usando clave: $SSH_KEY_PATH"
         SSH_TEST=$(ssh -T git@github.com -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no 2>&1 || true)
         if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
-          log "Clave ya verificada con GitHub — listo"
-          CLONE_URL="$REPO_SSH"
+          log "Clave verificada con GitHub — listo"
         else
           warn "Esta clave no está en GitHub todavía."
           _show_and_wait_for_key "$SSH_KEY_PATH"
         fi
-        CLONE_URL="$REPO_SSH"
       else
-        # Generar nueva
-        [[ -f "$SSH_KEY_PATH" ]] && rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
+        # Generar nueva — borrar la anterior si existe para evitar prompt
+        rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
         ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
         log "Clave SSH generada"
         _setup_ssh_config "$SSH_KEY_PATH"
         _show_and_wait_for_key "$SSH_KEY_PATH"
-        CLONE_URL="$REPO_SSH"
       fi
     else
-      # No hay claves — generar
+      # No hay ninguna clave — generar desde cero
+      rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
       ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
       log "Clave SSH generada"
       _setup_ssh_config "$SSH_KEY_PATH"
       _show_and_wait_for_key "$SSH_KEY_PATH"
-      CLONE_URL="$REPO_SSH"
     fi
+    CLONE_URL="$REPO_SSH"
   else
     ask "Usuario de GitHub:"
     read -r GH_USER
