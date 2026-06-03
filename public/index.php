@@ -25,7 +25,10 @@ try {
     // 4. Load Environment (.env) Variables dynamically
     loadEnvironmentVariables(dirname(__DIR__) . '/.env');
 
-    // 5. Initialize Logger and read debug configs
+    // 5. Run pending database migrations automatically
+    (new \App\Database\MigrationRunner())->run();
+
+    // 6. Initialize Logger and read debug configs
     $debugMode = filter_var($_ENV['APP_DEBUG'] ?? false, FILTER_VALIDATE_BOOLEAN);
     if ($debugMode) {
         ini_set('display_errors', 1);
@@ -36,7 +39,7 @@ try {
         error_reporting(0);
     }
 
-    // 6. Router Dispatching
+    // 7. Router Dispatching
     $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
     $requestMethod = $_SERVER['REQUEST_METHOD'];
 
@@ -71,7 +74,7 @@ try {
         exit;
     }
 
-    // 7. Dynamic API-Key security validation
+    // 8. Dynamic API-Key security validation
     // Chatbot actions require security token. Webhooks must bypass since payment servers query directly.
     $isWebhook = ($requestUri === '/api/webhook-pago');
     if (!$isWebhook) {
@@ -96,7 +99,7 @@ try {
         }
     }
 
-    // 8. Invoke Route Target Controller
+    // 9. Invoke Route Target Controller
     list($controllerClass, $actionMethod) = $routes[$requestMethod][$requestUri];
 
     if (!class_exists($controllerClass)) {
