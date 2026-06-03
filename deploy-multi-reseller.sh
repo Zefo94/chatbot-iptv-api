@@ -184,52 +184,31 @@ systemctl enable "php${PHP_VERSION}-fpm" --now 2>/dev/null || true
 # =============================================================================
 section "PASO 1 — Acceso al repositorio de GitHub"
 
-echo ""
-echo -e "  ¿Cómo quieres autenticarte con GitHub?"
-echo -e "  ${CYAN}1)${NC} SSH (clave deploy — recomendado para updates automáticos)"
-echo -e "  ${CYAN}2)${NC} HTTPS (usuario/token — más simple)"
-echo ""
-ask "Elige [1/2]:"
-read -r GH_AUTH_METHOD
-
-USE_SSH=false
-if [[ "$GH_AUTH_METHOD" == "1" ]]; then
-  USE_SSH=true
-  SSH_KEY_PATH="/root/.ssh/chatbot_deploy_key"
-  mkdir -p /root/.ssh && chmod 700 /root/.ssh
-
-  if [[ -f "$SSH_KEY_PATH" ]]; then
-    warn "Ya existe una clave en $SSH_KEY_PATH"
-    ask "¿Regenerar? [s/N]:"
-    read -r REGEN
-    if [[ "${REGEN,,}" == "s" ]]; then
-      rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
-      ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
-      log "Nueva clave generada"
-    fi
-  else
-    ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
-    log "Clave SSH generada"
-  fi
-
-  # Configurar ssh config
-  if ! grep -q "chatbot_deploy_key" /root/.ssh/config 2>/dev/null; then
+# Helpers SSH
+_setup_ssh_config() {
+  local key_path=$1
+  local key_name
+  key_name=$(basename "$key_path")
+  if ! grep -q "$key_name" /root/.ssh/config 2>/dev/null; then
     cat >> /root/.ssh/config <<SSHCONF
 
 Host github.com
     HostName github.com
     User git
-    IdentityFile $SSH_KEY_PATH
+    IdentityFile $key_path
     StrictHostKeyChecking no
 SSHCONF
     chmod 600 /root/.ssh/config
   fi
+}
 
+_show_and_wait_for_key() {
+  local key_path=$1
   echo ""
   echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo -e "${BOLD}  COPIA ESTA CLAVE Y AGRÉGALA A GITHUB:${NC}"
   echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  cat "${SSH_KEY_PATH}.pub"
+  cat "${key_path}.pub"
   echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
   echo -e "  Abre: ${CYAN}https://github.com/Zefo94/chatbot-iptv-api/settings/keys/new${NC}"
@@ -237,26 +216,122 @@ SSHCONF
   echo ""
   ask "Presiona Enter cuando la hayas agregado en GitHub..."
   read -r
-
-  # Verificar conexión
-  SSH_TEST=$(ssh -T git@github.com -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no 2>&1 || true)
+  SSH_TEST=$(ssh -T git@github.com -i "$key_path" -o StrictHostKeyChecking=no 2>&1 || true)
   if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     log "Conexión SSH con GitHub verificada"
   else
-    warn "No se pudo verificar SSH: $SSH_TEST"
-    warn "Continuando de todas formas..."
+    warn "No se pudo verificar: $SSH_TEST — continuando de todas formas"
   fi
+}
+
+# ── Probar primero si ya hay SSH con GitHub funcionando ───────────────────────
+USE_SSH=false
+SSH_KEY_PATH=""
+CLONE_URL=""
+
+info "Verificando si ya hay conexión SSH con GitHub..."
+SSH_EXISTING=$(ssh -T git@github.com -o StrictHostKeyChecking=no -o ConnectTimeout=5 2>&1 || true)
+
+if echo "$SSH_EXISTING" | grep -q "successfully authenticated"; then
+  log "¡Ya tienes SSH con GitHub configurado y funcionando!"
+  USE_SSH=true
+  # Detectar qué clave está siendo usada
+  ACTIVE_KEY=$(ssh -T git@github.com -v -o StrictHostKeyChecking=no 2>&1 | grep "Offering public key" | tail -1 | awk '{print $NF}' || true)
+  [[ -n "$ACTIVE_KEY" ]] && info "Clave activa: $ACTIVE_KEY"
   CLONE_URL="$REPO_SSH"
+  echo ""
+  echo -e "  ${CYAN}1)${NC} Usar la conexión SSH existente (recomendado)"
+  echo -e "  ${CYAN}2)${NC} Generar una nueva clave SSH de todas formas"
+  echo -e "  ${CYAN}3)${NC} Usar HTTPS en su lugar"
+  echo ""
+  ask "Elige [1/2/3] (Enter = 1):"
+  read -r GH_CHOICE
+  GH_CHOICE="${GH_CHOICE:-1}"
+
+  if [[ "$GH_CHOICE" == "2" ]]; then
+    # Generar clave nueva
+    SSH_KEY_PATH="/root/.ssh/chatbot_deploy_key"
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh
+    [[ -f "$SSH_KEY_PATH" ]] && rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
+    ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
+    _setup_ssh_config "$SSH_KEY_PATH"
+    _show_and_wait_for_key "$SSH_KEY_PATH"
+  elif [[ "$GH_CHOICE" == "3" ]]; then
+    USE_SSH=false
+    ask "Usuario de GitHub:"
+    read -r GH_USER
+    ask "Token de acceso personal:"
+    read -rs GH_TOKEN
+    echo ""
+    CLONE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/Zefo94/chatbot-iptv-api.git"
+    log "Usando autenticación HTTPS"
+  else
+    log "Usando la conexión SSH existente"
+  fi
 
 else
+  # No hay SSH con GitHub — ofrecer opciones
   echo ""
-  ask "Usuario de GitHub:"
-  read -r GH_USER
-  ask "Token de acceso personal (o contraseña):"
-  read -rs GH_TOKEN
+  echo -e "  No se detectó SSH con GitHub. ¿Cómo quieres autenticarte?"
+  echo -e "  ${CYAN}1)${NC} SSH — generar clave nueva (recomendado para updates automáticos)"
+  echo -e "  ${CYAN}2)${NC} HTTPS — usuario + token (más simple)"
   echo ""
-  CLONE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/Zefo94/chatbot-iptv-api.git"
-  log "Usando autenticación HTTPS"
+  ask "Elige [1/2]:"
+  read -r GH_AUTH_METHOD
+
+  if [[ "$GH_AUTH_METHOD" == "1" ]]; then
+    USE_SSH=true
+    SSH_KEY_PATH="/root/.ssh/chatbot_deploy_key"
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh
+
+    # Revisar si hay claves existentes que podrían servir
+    FOUND_KEYS=$(find /root/.ssh -name "*.pub" 2>/dev/null | grep -v "chatbot_deploy_key" || true)
+    if [[ -n "$FOUND_KEYS" ]]; then
+      echo ""
+      warn "Se encontraron estas claves SSH existentes en el servidor:"
+      echo "$FOUND_KEYS" | while read -r k; do echo "    $k"; done
+      echo ""
+      ask "¿Quieres usar alguna de esas claves existentes? Escribe la ruta (sin .pub) o Enter para generar una nueva:"
+      read -r EXISTING_KEY_PATH
+      if [[ -n "$EXISTING_KEY_PATH" ]] && [[ -f "$EXISTING_KEY_PATH" ]]; then
+        SSH_KEY_PATH="$EXISTING_KEY_PATH"
+        log "Usando clave existente: $SSH_KEY_PATH"
+        # Verificar si ya está en GitHub
+        SSH_TEST=$(ssh -T git@github.com -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no 2>&1 || true)
+        if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
+          log "Clave ya verificada con GitHub — listo"
+          CLONE_URL="$REPO_SSH"
+        else
+          warn "Esta clave no está en GitHub todavía."
+          _show_and_wait_for_key "$SSH_KEY_PATH"
+        fi
+        CLONE_URL="$REPO_SSH"
+      else
+        # Generar nueva
+        [[ -f "$SSH_KEY_PATH" ]] && rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
+        ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
+        log "Clave SSH generada"
+        _setup_ssh_config "$SSH_KEY_PATH"
+        _show_and_wait_for_key "$SSH_KEY_PATH"
+        CLONE_URL="$REPO_SSH"
+      fi
+    else
+      # No hay claves — generar
+      ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
+      log "Clave SSH generada"
+      _setup_ssh_config "$SSH_KEY_PATH"
+      _show_and_wait_for_key "$SSH_KEY_PATH"
+      CLONE_URL="$REPO_SSH"
+    fi
+  else
+    ask "Usuario de GitHub:"
+    read -r GH_USER
+    ask "Token de acceso personal:"
+    read -rs GH_TOKEN
+    echo ""
+    CLONE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/Zefo94/chatbot-iptv-api.git"
+    log "Usando autenticación HTTPS"
+  fi
 fi
 
 # =============================================================================
