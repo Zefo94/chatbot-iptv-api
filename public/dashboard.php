@@ -212,7 +212,8 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
   .precios-table tr:last-child td{border-bottom:none}
   .precios-table tr:hover td{background:rgba(255,255,255,.025)}
   .precio-input{width:90px;text-align:right;padding:6px 8px;font-size:14px}
-  .moneda-badge{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:4px}
+  .moneda-select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;font-family:var(--mono);margin-left:4px;cursor:pointer}
+  .moneda-select:focus{border-color:var(--info);outline:none}
   .save-row-btn{background:var(--accent);color:var(--accent-ink);border:none;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:filter .15s,opacity .15s;white-space:nowrap}
   .save-row-btn:hover{filter:brightness(1.08)}
   .save-row-btn:disabled{opacity:.5;cursor:not-allowed}
@@ -380,7 +381,11 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
           </td>
           <td>
             <input type="number" class="precio-input" value="${esc(String(precio))}" min="0" step="0.01">
-            <span class="moneda-badge">${esc(moneda)}</span>
+            <select class="moneda-select">
+              ${['EUR','USD','GBP','MXN','COP','ARS','CLP','PEN','BRL'].map(c =>
+                `<option value="${c}" ${moneda===c?'selected':''}>${c}</option>`
+              ).join('')}
+            </select>
           </td>
           <td style="white-space:nowrap">
             <button class="save-row-btn">Guardar</button>
@@ -408,6 +413,7 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
   async function saveRow(tr, paquetes) {
     const pkgId  = parseInt(tr.dataset.pkgId, 10);
     const precio = parseFloat(tr.querySelector('.precio-input').value);
+    const moneda = tr.querySelector('.moneda-select').value;
     const activo = tr.querySelector('.activo-chk').checked;
     const btn    = tr.querySelector('.save-row-btn');
     const msg    = tr.querySelector('.row-msg');
@@ -422,7 +428,7 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
         package_id:   pkgId,
         package_name: pkg.nombre || '',
         precio:       precio,
-        moneda:       'EUR',
+        moneda:       moneda,
         activo:       activo,
       });
       showRowMsg(msg, '✓ Guardado', true);
