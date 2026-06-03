@@ -216,9 +216,9 @@ $isAuth = !empty($_SESSION['rev_id']);
   .pkg-name{font-weight:500}
   .pkg-id{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:6px}
   .dur{font-size:12px;color:var(--muted)}
-  .global-price{font-family:var(--mono);font-size:12px;color:var(--muted)}
-  .price-input{width:100px;text-align:right;padding:6px 8px;font-size:14px}
-  .moneda-sel{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;font-family:var(--mono);margin-left:4px;cursor:pointer}
+  .price-wrap{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+  .price-input{width:110px;text-align:right;padding:6px 8px;font-size:14px}
+  .moneda-sel{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;font-family:var(--mono);cursor:pointer;min-width:72px}
   .activo-wrap{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;white-space:nowrap}
   .activo-wrap input{width:16px;height:16px;cursor:pointer;accent-color:var(--accent)}
   .save-btn{background:var(--accent);color:var(--accent-ink);border:none;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:filter .15s,opacity .15s;white-space:nowrap}
@@ -309,7 +309,7 @@ $isAuth = !empty($_SESSION['rev_id']);
 
 <main>
   <div class="page-title">Mis paquetes</div>
-  <div class="page-sub">Establece tu precio de venta para cada paquete. El precio global es el de referencia del admin.</div>
+  <div class="page-sub">Establece tu precio de venta para cada paquete.</div>
 
   <div class="card">
     <div class="card-head">
@@ -319,7 +319,7 @@ $isAuth = !empty($_SESSION['rev_id']);
         Actualizar
       </button>
     </div>
-    <div id="tableWrap"><div class="loading">Cargando paquetes…</div></div>
+    <div id="tableWrap" style="overflow-x:auto"><div class="loading">Cargando paquetes…</div></div>
   </div>
 </main>
 
@@ -367,15 +367,16 @@ $isAuth = !empty($_SESSION['rev_id']);
         return `<tr data-pkg-id="${pkg.id}">
           <td><span class="pkg-name">${esc(pkg.nombre)}</span>${ownBadge}<span class="pkg-id">#${pkg.id}</span></td>
           <td><span class="dur">${esc(pkg.duracion_humana)}</span></td>
-          <td><span class="global-price">${pkg.precio_global.toFixed(2)} ${esc(pkg.moneda_global)}</span></td>
           <td>
             <label class="activo-wrap">
               <input type="checkbox" class="activo-chk" ${pkg.activo?'checked':''}> Activo
             </label>
           </td>
           <td>
-            <input type="number" class="price-input" value="${precio.toFixed(2)}" min="0" step="0.01">
-            <select class="moneda-sel">${monedaOpts}</select>
+            <div class="price-wrap">
+              <input type="number" class="price-input" value="${precio.toFixed(2)}" min="0" step="0.01">
+              <select class="moneda-sel">${monedaOpts}</select>
+            </div>
           </td>
           <td style="white-space:nowrap">
             <button class="save-btn">Guardar</button>
@@ -386,7 +387,7 @@ $isAuth = !empty($_SESSION['rev_id']);
 
       wrap.innerHTML = `<table class="pkg-table">
         <thead><tr>
-          <th>Paquete</th><th>Duración</th><th>Precio global</th><th>Estado</th><th>Mi precio</th><th></th>
+          <th>Paquete</th><th>Duración</th><th>Estado</th><th>Mi precio</th><th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
