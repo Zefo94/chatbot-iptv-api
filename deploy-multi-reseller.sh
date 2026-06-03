@@ -353,25 +353,55 @@ fi
 # =============================================================================
 section "PASO 2 — Configuración de revendedores"
 
-# ── Detectar instalación existente en /var/www/html ──────────────────────────
+# ── Leer plantilla del .env existente en /var/www/html ───────────────────────
 EXISTING_HTML=""
+TPL_XUI_URL=""; TPL_XUI_USER=""; TPL_XUI_PASS=""
+TPL_XUI_RESELLER_URL=""; TPL_XUI_PKG_ID="1"; TPL_XUI_CONNS="1"
+TPL_PAYPAL_CID=""; TPL_PAYPAL_CSEC=""; TPL_MP_TOKEN=""
+TPL_WOMPI_PUB=""; TPL_WOMPI_PRIV=""
+HAS_TEMPLATE=false
+
+_read_env() { grep "^${1}=" "$2" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true; }
+
 if [[ -f "/var/www/html/public/index.php" ]] && [[ -f "/var/www/html/.env" ]]; then
+  ENV_FILE="/var/www/html/.env"
   echo ""
-  warn "Se detectó una instalación existente en /var/www/html"
-  info "Este script NO la tocará — solo crea nuevas instancias en /var/www/chatbot-{slug}/"
+  log "Instalación existente detectada en /var/www/html — leyendo configuración..."
+
+  TPL_XUI_URL=$(_read_env "XUI_API_URL"            "$ENV_FILE")
+  TPL_XUI_USER=$(_read_env "XUI_USERNAME"           "$ENV_FILE")
+  TPL_XUI_PASS=$(_read_env "XUI_PASSWORD"           "$ENV_FILE")
+  TPL_XUI_RESELLER_URL=$(_read_env "XUI_RESELLER_API_URL" "$ENV_FILE")
+  TPL_XUI_PKG_ID=$(_read_env "XUI_DEFAULT_PACKAGE_ID"    "$ENV_FILE")
+  TPL_XUI_CONNS=$(_read_env "XUI_DEFAULT_MAX_CONNECTIONS" "$ENV_FILE")
+  TPL_PAYPAL_CID=$(_read_env "PAYPAL_CLIENT_ID"     "$ENV_FILE")
+  TPL_PAYPAL_CSEC=$(_read_env "PAYPAL_CLIENT_SECRET" "$ENV_FILE")
+  TPL_MP_TOKEN=$(_read_env "MERCADOPAGO_ACCESS_TOKEN" "$ENV_FILE")
+  TPL_WOMPI_PUB=$(_read_env "WOMPI_PUBLIC_KEY"      "$ENV_FILE")
+  TPL_WOMPI_PRIV=$(_read_env "WOMPI_PRIVATE_KEY"    "$ENV_FILE")
+
+  [[ -z "$TPL_XUI_PKG_ID" ]] && TPL_XUI_PKG_ID="1"
+  [[ -z "$TPL_XUI_CONNS"  ]] && TPL_XUI_CONNS="1"
+  [[ -z "$TPL_XUI_RESELLER_URL" ]] && TPL_XUI_RESELLER_URL="$TPL_XUI_URL"
+  HAS_TEMPLATE=true
+
+  echo -e "  ${DIM}Plantilla cargada:${NC}"
+  [[ -n "$TPL_XUI_URL"  ]] && echo -e "  ${DIM}  XUI URL   : $TPL_XUI_URL${NC}"
+  [[ -n "$TPL_XUI_USER" ]] && echo -e "  ${DIM}  XUI User  : $TPL_XUI_USER${NC}"
+  [[ -n "$TPL_PAYPAL_CID" ]] && echo -e "  ${DIM}  PayPal    : configurado${NC}"
+  [[ -n "$TPL_MP_TOKEN"   ]] && echo -e "  ${DIM}  MercadoPago: configurado${NC}"
   echo ""
-  ask "¿Quieres incluir la instancia de /var/www/html en el resumen final? [S/n]:"
+
+  ask "¿Incluir la instancia de /var/www/html en el resumen final? [S/n]:"
   read -r INCLUDE_HTML
   if [[ "${INCLUDE_HTML,,}" != "n" ]]; then
     EXISTING_HTML="yes"
-    ask "¿Qué slug/nombre tiene ese revendedor? (ej: reseller1, principal):"
+    ask "¿Qué nombre/slug tiene ese revendedor? (ej: reseller1):"
     read -r HTML_SLUG
-    if [[ -z "$HTML_SLUG" ]]; then HTML_SLUG="principal"; fi
-    # Leer API key existente
-    EXISTING_API_KEY=$(grep "CHATBOT_API_KEY=" /var/www/html/.env 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "ver /var/www/html/.env")
-    EXISTING_DB_NAME=$(grep "^DB_NAME=" /var/www/html/.env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "ver .env")
-    EXISTING_APP_URL=$(grep "^APP_URL=" /var/www/html/.env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "ver .env")
-    info "  Encontrado: URL=$EXISTING_APP_URL  BD=$EXISTING_DB_NAME"
+    [[ -z "$HTML_SLUG" ]] && HTML_SLUG="principal"
+    EXISTING_API_KEY=$(_read_env "CHATBOT_API_KEY" "$ENV_FILE")
+    EXISTING_DB_NAME=$(_read_env "DB_NAME"         "$ENV_FILE")
+    EXISTING_APP_URL=$(_read_env "APP_URL"         "$ENV_FILE")
   fi
 fi
 
@@ -383,10 +413,10 @@ if ! [[ "$NUM_RESELLERS" =~ ^[0-9]+$ ]] || [[ "$NUM_RESELLERS" -lt 1 ]] || [[ "$
 fi
 
 echo ""
-info "Se configurarán $NUM_RESELLERS revendedor(es)"
+info "Se configurarán $NUM_RESELLERS revendedor(es) nuevos"
 echo ""
 
-# Pedir IP pública del servidor
+# Dominio base
 SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null || curl -s -m 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
 info "IP detectada del servidor: $SERVER_IP"
 echo ""
@@ -405,22 +435,42 @@ fi
 # =============================================================================
 section "PASO 3 — Datos de cada revendedor"
 
+if [[ "$HAS_TEMPLATE" == "true" ]]; then
+  info "Los campos comunes se copian del .env existente."
+  info "Solo se piden: nombre, subdominio y credenciales XUI del nuevo panel."
+  echo ""
+fi
+
 declare -A RESELLER_DATA
+
+# Helper: pide valor con default visible
+ask_default() {
+  local prompt=$1 default=$2 varname=$3
+  if [[ -n "$default" ]]; then
+    ask "${prompt} [Enter = ${default}]:"
+  else
+    ask "${prompt}:"
+  fi
+  local val
+  read -r val
+  if [[ -z "$val" ]]; then val="$default"; fi
+  printf -v "$varname" '%s' "$val"
+}
 
 for ((i=1; i<=NUM_RESELLERS; i++)); do
   echo ""
-  echo -e "${BOLD}${YELLOW}┌─ REVENDEDOR $i de $NUM_RESELLERS ─────────────────────────────────┐${NC}"
+  echo -e "${BOLD}${YELLOW}┌─ REVENDEDOR $i de $NUM_RESELLERS ────────────────────────────────┐${NC}"
   echo ""
 
-  # Slug (identificador URL-friendly)
-  ask "Nombre del revendedor (sin espacios, ej: reseller1, mitienda, companyxyz):"
+  # ── Nombre / slug ──────────────────────────────────────────────────────────
+  ask "Nombre del revendedor (sin espacios, ej: reseller2, tiendaXYZ):"
   read -r SLUG
   SLUG=$(echo "$SLUG" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
-  if [[ -z "$SLUG" ]]; then SLUG="reseller$i"; fi
+  [[ -z "$SLUG" ]] && SLUG="reseller$i"
 
-  # Dominio/subdominio
+  # ── Subdominio ─────────────────────────────────────────────────────────────
   if [[ "$USE_DOMAIN" == "true" ]]; then
-    ask "Subdominio para este revendedor (ej: api-$SLUG o presiona Enter para api-${SLUG}.${DOMAIN_BASE}):"
+    ask "Subdominio (Enter = api-${SLUG}.${DOMAIN_BASE}):"
     read -r SUBDOMAIN
     if [[ -z "$SUBDOMAIN" ]]; then
       FULL_DOMAIN="api-${SLUG}.${DOMAIN_BASE}"
@@ -429,45 +479,86 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
     fi
   else
     FULL_DOMAIN="$SERVER_IP"
-    warn "Sin dominio — la API usará la IP $SERVER_IP (no se puede hacer SSL)"
+    warn "Sin dominio — usará la IP $SERVER_IP (sin SSL)"
   fi
 
-  # XUI Panel
+  # ── XUI Panel ─────────────────────────────────────────────────────────────
   echo ""
-  echo -e "  ${DIM}── Configuración del panel XUI.ONE ──${NC}"
-  ask "URL del panel XUI.ONE (ej: http://panel.ejemplo.com:8000/api.php):"
-  read -r XUI_URL
-  ask "Usuario administrador del panel XUI:"
-  read -r XUI_USER
-  ask "Contraseña del panel XUI:"
-  read -rs XUI_PASS
-  echo ""
-  ask "ID de paquete predeterminado [1]:"
-  read -r XUI_PKG_ID
-  if [[ -z "$XUI_PKG_ID" ]]; then XUI_PKG_ID="1"; fi
-  ask "Conexiones máximas predeterminadas [1]:"
-  read -r XUI_CONNS
-  if [[ -z "$XUI_CONNS" ]]; then XUI_CONNS="1"; fi
+  echo -e "  ${DIM}── Panel XUI.ONE ──${NC}"
 
-  # URL del reseller en XUI (puede ser igual o diferente)
-  ask "URL API de revendedores en XUI (Enter para usar la misma que arriba):"
-  read -r XUI_RESELLER_URL
-  if [[ -z "$XUI_RESELLER_URL" ]]; then XUI_RESELLER_URL="$XUI_URL"; fi
+  if [[ "$HAS_TEMPLATE" == "true" ]]; then
+    # Mismo panel — solo pedir la API key del revendedor en XUI
+    XUI_URL="$TPL_XUI_URL"
+    XUI_USER="$TPL_XUI_USER"
+    XUI_PASS="$TPL_XUI_PASS"
+    XUI_PKG_ID="$TPL_XUI_PKG_ID"
+    XUI_CONNS="$TPL_XUI_CONNS"
+    XUI_RESELLER_URL="$TPL_XUI_RESELLER_URL"
 
-  # Pagos (opcionales)
-  echo ""
-  echo -e "  ${DIM}── Pasarelas de pago (opcional, Enter para omitir) ──${NC}"
-  ask "PayPal Client ID:"
-  read -r PAYPAL_CID
-  ask "PayPal Client Secret:"
-  read -rs PAYPAL_CSEC
-  echo ""
-  ask "MercadoPago Access Token:"
-  read -r MP_TOKEN
-  ask "Wompi Public Key:"
-  read -r WOMPI_PUB
-  ask "Wompi Private Key:"
-  read -rs WOMPI_PRIV
+    echo -e "  ${DIM}Panel: $XUI_URL (copiado del existente)${NC}"
+    echo ""
+    ask "API Key del revendedor en XUI (xui_api_key del revendedor):"
+    read -r XUI_RESELLER_APIKEY
+    echo ""
+
+    ask "¿Este revendedor usa un panel XUI diferente? [s/N]:"
+    read -r DIFF_PANEL
+    if [[ "${DIFF_PANEL,,}" == "s" ]]; then
+      ask_default "URL del panel XUI.ONE" "$TPL_XUI_URL"  XUI_URL
+      ask_default "Usuario del panel XUI"  "$TPL_XUI_USER" XUI_USER
+      ask "Contraseña del panel XUI:"
+      read -rs XUI_PASS; echo ""
+      ask_default "ID de paquete predeterminado"   "$TPL_XUI_PKG_ID"  XUI_PKG_ID
+      ask_default "Conexiones máximas por defecto" "$TPL_XUI_CONNS"   XUI_CONNS
+      ask_default "URL API revendedores XUI"       "$TPL_XUI_RESELLER_URL" XUI_RESELLER_URL
+    fi
+  else
+    # Sin plantilla — pedir todo
+    ask_default "URL del panel XUI.ONE" "$TPL_XUI_URL"  XUI_URL
+    ask_default "Usuario del panel XUI"  "$TPL_XUI_USER" XUI_USER
+    ask "Contraseña del panel XUI:"
+    read -rs XUI_PASS; echo ""
+    ask_default "ID de paquete predeterminado"   "$TPL_XUI_PKG_ID"  XUI_PKG_ID
+    ask_default "Conexiones máximas por defecto" "$TPL_XUI_CONNS"   XUI_CONNS
+    ask_default "URL API revendedores XUI (Enter = misma URL)" "$TPL_XUI_RESELLER_URL" XUI_RESELLER_URL
+    [[ -z "$XUI_RESELLER_URL" ]] && XUI_RESELLER_URL="$XUI_URL"
+    XUI_RESELLER_APIKEY=""
+  fi
+
+  # ── Pasarelas de pago ─────────────────────────────────────────────────────
+  if [[ "$HAS_TEMPLATE" == "true" ]]; then
+    # Copiar del existente sin preguntar
+    PAYPAL_CID="$TPL_PAYPAL_CID"
+    PAYPAL_CSEC="$TPL_PAYPAL_CSEC"
+    MP_TOKEN="$TPL_MP_TOKEN"
+    WOMPI_PUB="$TPL_WOMPI_PUB"
+    WOMPI_PRIV="$TPL_WOMPI_PRIV"
+
+    echo ""
+    info "Pasarelas de pago copiadas del revendedor existente."
+    ask "¿Cambiar alguna pasarela de pago para este revendedor? [s/N]:"
+    read -r CHANGE_PAY
+    if [[ "${CHANGE_PAY,,}" == "s" ]]; then
+      echo ""
+      ask_default "PayPal Client ID"          "$TPL_PAYPAL_CID"   PAYPAL_CID
+      ask "PayPal Client Secret (Enter = igual):"
+      read -rs PAYPAL_CSEC_IN; echo ""
+      [[ -n "$PAYPAL_CSEC_IN" ]] && PAYPAL_CSEC="$PAYPAL_CSEC_IN"
+      ask_default "MercadoPago Access Token"  "$TPL_MP_TOKEN"     MP_TOKEN
+      ask_default "Wompi Public Key"          "$TPL_WOMPI_PUB"    WOMPI_PUB
+      ask "Wompi Private Key (Enter = igual):"
+      read -rs WOMPI_PRIV_IN; echo ""
+      [[ -n "$WOMPI_PRIV_IN" ]] && WOMPI_PRIV="$WOMPI_PRIV_IN"
+    fi
+  else
+    echo ""
+    echo -e "  ${DIM}── Pasarelas de pago (Enter para omitir) ──${NC}"
+    ask "PayPal Client ID:";          read -r  PAYPAL_CID
+    ask "PayPal Client Secret:";      read -rs PAYPAL_CSEC; echo ""
+    ask "MercadoPago Access Token:";  read -r  MP_TOKEN
+    ask "Wompi Public Key:";          read -r  WOMPI_PUB
+    ask "Wompi Private Key:";         read -rs WOMPI_PRIV; echo ""
+  fi
   echo ""
 
   # Guardar en array asociativo
@@ -477,6 +568,7 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
   RESELLER_DATA["${i}_xui_user"]="$XUI_USER"
   RESELLER_DATA["${i}_xui_pass"]="$XUI_PASS"
   RESELLER_DATA["${i}_xui_reseller_url"]="$XUI_RESELLER_URL"
+  RESELLER_DATA["${i}_xui_reseller_apikey"]="${XUI_RESELLER_APIKEY:-}"
   RESELLER_DATA["${i}_xui_pkg_id"]="$XUI_PKG_ID"
   RESELLER_DATA["${i}_xui_conns"]="$XUI_CONNS"
   RESELLER_DATA["${i}_paypal_cid"]="$PAYPAL_CID"
@@ -547,6 +639,7 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
   XUI_USER="${RESELLER_DATA["${i}_xui_user"]}"
   XUI_PASS="${RESELLER_DATA["${i}_xui_pass"]}"
   XUI_RESELLER_URL="${RESELLER_DATA["${i}_xui_reseller_url"]}"
+  XUI_RESELLER_APIKEY="${RESELLER_DATA["${i}_xui_reseller_apikey"]:-}"
   XUI_PKG_ID="${RESELLER_DATA["${i}_xui_pkg_id"]}"
   XUI_CONNS="${RESELLER_DATA["${i}_xui_conns"]}"
   PAYPAL_CID="${RESELLER_DATA["${i}_paypal_cid"]}"
@@ -615,6 +708,7 @@ XUI_API_URL=${XUI_URL}
 XUI_USERNAME=${XUI_USER}
 XUI_PASSWORD=${XUI_PASS}
 XUI_RESELLER_API_URL=${XUI_RESELLER_URL}
+XUI_RESELLER_API_KEY=${XUI_RESELLER_APIKEY}
 XUI_DEFAULT_PACKAGE_ID=${XUI_PKG_ID}
 XUI_DEFAULT_MAX_CONNECTIONS=${XUI_CONNS}
 
