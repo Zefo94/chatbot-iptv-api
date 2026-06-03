@@ -82,9 +82,18 @@ class PanelController extends BaseController
                 $items = [];
             }
 
-            $config         = require dirname(__DIR__, 2) . '/config/payment.php';
-            $pricePerCredit = (float)($config['paypal']['price_per_credit'] ?? 0.0);
-            $currency       = strtoupper($config['paypal']['currency'] ?? 'EUR');
+            // Load prices from local DB (keyed by package_id)
+            $dbPrices = [];
+            try {
+                $rows = \App\Database\Connection::getInstance()
+                    ->query("SELECT package_id, precio, moneda, activo FROM precios_paquetes")
+                    ->fetchAll();
+                foreach ($rows as $r) {
+                    $dbPrices[(int)$r['package_id']] = $r;
+                }
+            } catch (\Exception $e) {
+                // DB unavailable — prices will show as null
+            }
 
             $packages = [];
             foreach ($items as $p) {
@@ -92,16 +101,18 @@ class PanelController extends BaseController
                 $isTrial = ($p['is_trial'] ?? '0') === '1';
                 if ($isTrial && !$includeTrials) continue;
 
-                $duration = (int)($p['official_duration'] ?? 0);
-                $unit     = (string)($p['official_duration_in'] ?? '');
-                $days     = $this->durationToDays($duration, $unit);
-                $credits  = (int)($p['official_credits'] ?? 0);
-                $precio   = ($pricePerCredit > 0 && $credits > 0)
-                    ? number_format($credits * $pricePerCredit, 2, '.', '')
-                    : null;
+                $duration  = (int)($p['official_duration'] ?? 0);
+                $unit      = (string)($p['official_duration_in'] ?? '');
+                $days      = $this->durationToDays($duration, $unit);
+                $credits   = (int)($p['official_credits'] ?? 0);
+                $pkgId     = (int)($p['id'] ?? 0);
+                $dbRow     = $dbPrices[$pkgId] ?? null;
+                $precio    = $dbRow ? number_format((float)$dbRow['precio'], 2, '.', '') : null;
+                $moneda    = $dbRow ? strtoupper($dbRow['moneda']) : 'EUR';
+                $activo    = $dbRow ? (bool)$dbRow['activo'] : true;
 
                 $packages[] = [
-                    'id'              => (int)($p['id'] ?? 0),
+                    'id'              => $pkgId,
                     'nombre'          => (string)($p['package_name'] ?? ''),
                     'duracion'        => $duration,
                     'duracion_unidad' => $unit,
@@ -110,8 +121,9 @@ class PanelController extends BaseController
                     'es_trial'        => $isTrial,
                     'creditos'        => $credits,
                     'precio'          => $precio,
-                    'moneda'          => $currency,
-                    'precio_label'    => $precio !== null ? "{$precio} {$currency}" : null,
+                    'moneda'          => $moneda,
+                    'precio_label'    => $precio !== null ? "{$precio} {$moneda}" : null,
+                    'activo'          => $activo,
                 ];
             }
 

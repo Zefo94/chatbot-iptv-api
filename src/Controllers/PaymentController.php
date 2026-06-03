@@ -139,8 +139,20 @@ class PaymentController extends BaseController
                 }
             }
 
-            if ($dias <= 0)  $this->error("Debes proporcionar 'dias' o 'package_id'.", 400);
-            if ($monto <= 0) $this->error("Debes proporcionar 'monto' o 'package_id' con PAYPAL_PRICE_PER_CREDIT configurado.", 400);
+            if ($dias <= 0) $this->error("Debes proporcionar 'dias' o 'package_id'.", 400);
+
+            // Look up price from DB table when package_id is provided (takes priority over request monto)
+            if ($monto <= 0.0 && !empty($input['package_id'])) {
+                try {
+                    $stmt = \App\Database\Connection::getInstance()
+                        ->prepare("SELECT precio FROM precios_paquetes WHERE package_id = :id AND activo = 1 LIMIT 1");
+                    $stmt->execute([':id' => (int)$input['package_id']]);
+                    $row = $stmt->fetch();
+                    if ($row) $monto = (float)$row['precio'];
+                } catch (\Exception $e) { /* fall through */ }
+            }
+
+            if ($monto <= 0) $this->error("No se encontró precio configurado para este paquete.", 400);
 
             $revendedorId = !empty($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
             $pkgIdForOrder = isset($input['package_id']) ? (int)$input['package_id'] : null;
