@@ -55,20 +55,16 @@ class PreciosController extends BaseController
                 INSERT INTO precios_paquetes (package_id, package_name, precio, moneda, activo)
                 VALUES (:id, :name, :precio, :moneda, :activo)
                 ON DUPLICATE KEY UPDATE
-                    package_name = IF(:name2 <> '', :name2, package_name),
-                    precio       = :precio2,
-                    moneda       = :moneda2,
-                    activo       = :activo2
+                    package_name = IF(VALUES(package_name) <> '', VALUES(package_name), package_name),
+                    precio       = VALUES(precio),
+                    moneda       = VALUES(moneda),
+                    activo       = VALUES(activo)
             ")->execute([
-                ':id'      => $packageId,
-                ':name'    => $packageName,
-                ':precio'  => $precio,
-                ':moneda'  => $moneda,
-                ':activo'  => $activo,
-                ':name2'   => $packageName,
-                ':precio2' => $precio,
-                ':moneda2' => $moneda,
-                ':activo2' => $activo,
+                ':id'     => $packageId,
+                ':name'   => $packageName,
+                ':precio' => $precio,
+                ':moneda' => $moneda,
+                ':activo' => $activo,
             ]);
 
             LoggerService::logAction("ACTUALIZAR_PRECIO", $input, [
