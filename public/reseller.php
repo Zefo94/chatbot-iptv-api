@@ -352,7 +352,7 @@ $isAuth = !empty($_SESSION['rev_id']);
       if(!pkgs.length){ wrap.innerHTML='<div class="loading">No hay paquetes disponibles.</div>'; return; }
 
       const rows = pkgs.map(pkg => {
-        const precio = pkg.precio_propio !== null ? pkg.precio_propio : 0.00;
+        const precio = pkg.precio_propio ?? 0.00;
         const moneda = pkg.moneda_propia || 'EUR';
         const ownBadge = pkg.tiene_precio_propio ? '<span class="own-badge">propio</span>' : '';
         const monedaOpts = MONEDAS.map(m=>`<option value="${m}"${moneda===m?' selected':''}>${m}</option>`).join('');
