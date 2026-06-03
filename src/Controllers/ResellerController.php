@@ -50,7 +50,7 @@ class ResellerController extends BaseController
         ]);
 
         $nombre = trim($input['nombre']);
-        $telefono = isset($input['telefono']) ? trim((string)$input['telefono']) : null;
+        $telefono = isset($input['telefono']) ? trim((string)$input['telefono']) : '';
         $xuiUserId = (int)$input['xui_user_id'];
         $xuiUsername = trim($input['xui_username']);
         $xuiApiKey = trim($input['xui_api_key']);

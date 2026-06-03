@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS `logs` (
 CREATE TABLE IF NOT EXISTS `revendedores` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `nombre` VARCHAR(100) NOT NULL,
-  `telefono` VARCHAR(20) NOT NULL,
+  `telefono` VARCHAR(20) NOT NULL DEFAULT '',
   `xui_user_id` INT NOT NULL UNIQUE,
   `xui_username` VARCHAR(100) NOT NULL,
   `xui_api_key` VARCHAR(255) NOT NULL,
