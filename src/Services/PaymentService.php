@@ -649,7 +649,7 @@ class PaymentService
      * Create a PayPal order via Orders API v2 and return the approve URL.
      * Sandbox uses api-m.sandbox.paypal.com; live uses api-m.paypal.com.
      */
-    public function createPayPalOrder(string $orderId, float $amount, string $currency = 'EUR'): array
+    public function createPayPalOrder(string $orderId, float $amount, string $currency = 'EUR', string $description = ''): array
     {
         $config = require dirname(__DIR__, 2) . '/config/payment.php';
         $clientId     = $config['paypal']['client_id']     ?? '';
@@ -689,7 +689,7 @@ class PaymentService
             'intent' => 'CAPTURE',
             'purchase_units' => [[
                 'custom_id'   => $orderId,
-                'description' => "Renovación IPTV · {$orderId}",
+                'description' => $description ?: "Renovación de Servicio · {$orderId}",
                 'amount'      => [
                     'currency_code' => $currency,
                     'value'         => number_format($amount, 2, '.', ''),
