@@ -202,6 +202,32 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
   .resp-meta{color:var(--muted);font-size:12.5px}
   .empty{color:var(--muted);font-size:13.5px}
 
+  /* ---------- Revendedores section ---------- */
+  .rev-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:4px}
+  .rev-header h1{font-size:22px;margin:0}
+  .rev-grid{display:grid;gap:16px;margin-top:20px}
+  .rev-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
+  .rev-card h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:0 0 16px;font-weight:600}
+  .rev-table{width:100%;border-collapse:collapse}
+  .rev-table th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)}
+  .rev-table td{padding:10px 12px;border-bottom:1px solid #1a2a40;vertical-align:middle;font-size:14px}
+  .rev-table tr:last-child td{border-bottom:none}
+  .rev-table tr:hover td{background:rgba(255,255,255,.025)}
+  .credits-badge{font-family:var(--mono);background:rgba(34,197,94,.12);color:var(--accent);border:1px solid rgba(34,197,94,.25);border-radius:6px;padding:3px 10px;font-size:13px;font-weight:600}
+  .credits-badge.low{background:rgba(248,113,113,.12);color:var(--danger);border-color:rgba(248,113,113,.25)}
+  .rev-actions{display:flex;gap:6px;align-items:center}
+  .btn-sm-danger{background:rgba(248,113,113,.15);color:var(--danger);border:1px solid rgba(248,113,113,.3);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s}
+  .btn-sm-danger:hover{background:rgba(248,113,113,.28)}
+  .btn-sm-info{background:rgba(56,189,248,.12);color:var(--info);border:1px solid rgba(56,189,248,.25);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s}
+  .btn-sm-info:hover{background:rgba(56,189,248,.22)}
+  .recharge-row{display:none;background:#0f1d31}
+  .recharge-row td{padding:10px 14px}
+  .recharge-inner{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .recharge-inner input{width:110px;padding:6px 10px;font-size:14px}
+  .recharge-inner textarea{flex:1;min-width:180px;padding:6px 10px;font-size:13px;resize:none;height:38px;font-family:var(--sans)}
+  .create-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:640px){.create-form-grid{grid-template-columns:1fr}}
+
   /* ---------- Precios section ---------- */
   .precios-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:4px}
   .precios-header h1{font-size:22px;margin:0}
@@ -309,6 +335,10 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
     let html = `
       <div class="nav-group">
         <h3>Gestión</h3>
+        <button class="nav-item" data-id="__revendedores__">
+          <span class="badge MGT">MGT</span>
+          <span class="ttl">Revendedores</span>
+        </button>
         <button class="nav-item" data-id="__precios__">
           <span class="badge MGT">MGT</span>
           <span class="ttl">Precios de Paquetes</span>
@@ -328,6 +358,212 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
 
     nav.innerHTML = html;
     nav.querySelectorAll('.nav-item').forEach(b=> b.addEventListener('click', ()=>select(b.dataset.id)));
+  }
+
+  // ---- Revendedores section ----
+  async function renderRevendedores(){
+    currentId = '__revendedores__';
+    document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active', b.dataset.id==='__revendedores__'));
+    const main = $('#main');
+    main.innerHTML = `
+      <div class="rev-header">
+        <div>
+          <h1>Revendedores</h1>
+          <p style="margin-top:4px;color:var(--muted);font-size:13.5px">Administra los revendedores registrados y sus créditos en XUI.ONE.</p>
+        </div>
+        <button class="precios-reload" id="reloadRevs">${ICON.refresh} Actualizar</button>
+      </div>
+      <div class="rev-grid">
+        <div class="rev-card">
+          <h2>Revendedores registrados</h2>
+          <div id="revTableBody"><div class="precios-loading">Cargando…</div></div>
+        </div>
+        <div class="rev-card">
+          <h2>Registrar nuevo revendedor</h2>
+          <div class="create-form-grid">
+            <div class="form-row">
+              <label>Nombre <span class="req">*</span></label>
+              <input id="rev_nombre" placeholder="ej: Juan Pérez" spellcheck="false">
+            </div>
+            <div class="form-row">
+              <label>Teléfono <span style="color:var(--muted);font-size:11px">(opcional)</span></label>
+              <input id="rev_telefono" placeholder="ej: +34600000000" spellcheck="false">
+            </div>
+            <div class="form-row">
+              <label>XUI User ID <span class="req">*</span></label>
+              <input id="rev_user_id" type="number" placeholder="ej: 17">
+              <div class="help">ID numérico del usuario en el panel XUI.ONE</div>
+            </div>
+            <div class="form-row">
+              <label>XUI Username <span class="req">*</span></label>
+              <input id="rev_username" placeholder="ej: brenderos94" spellcheck="false">
+            </div>
+            <div class="form-row" style="grid-column:1/-1">
+              <label>XUI API Key <span class="req">*</span></label>
+              <input id="rev_api_key" placeholder="ej: 52035387EB0A9C3E4CD8D6133B219493" spellcheck="false" style="font-family:var(--mono)">
+              <div class="help">API Key del revendedor en XUI.ONE (no la del admin)</div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-primary" id="createRevBtn">${ICON.send} Registrar revendedor</button>
+          </div>
+          <div id="createRevMsg" style="margin-top:12px;font-size:13.5px"></div>
+        </div>
+      </div>`;
+    $('#reloadRevs').addEventListener('click', loadRevendedores);
+    $('#createRevBtn').addEventListener('click', createRevendedor);
+    await loadRevendedores();
+  }
+
+  async function loadRevendedores(){
+    const body = $('#revTableBody');
+    if(!body) return;
+    body.innerHTML = '<div class="precios-loading">Cargando…</div>';
+    try {
+      const res = await apiFetch('/api/listar-revendedores', {});
+      const revs = res?.data?.revendedores || [];
+      if(!revs.length){
+        body.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:14px">No hay revendedores registrados.</div>';
+        return;
+      }
+      const rows = revs.map(r => {
+        const low = r.creditos_cache < 10;
+        return `<tr data-rev-id="${r.local_id}" data-xui-user-id="${r.xui_user_id}">
+          <td><strong>${esc(r.nombre)}</strong><br><span style="font-size:12px;color:var(--muted)">${esc(r.xui_username)}</span></td>
+          <td style="font-size:12px;color:var(--muted)">${r.telefono ? esc(r.telefono) : '—'}</td>
+          <td><span class="credits-badge${low?' low':''}">${r.creditos_cache} créditos</span></td>
+          <td>
+            <span style="font-size:12px;${r.active?'color:var(--accent)':'color:var(--danger)'}">${r.active ? '● Activo' : '● Inactivo'}</span>
+          </td>
+          <td>
+            <div class="rev-actions">
+              <button class="btn-sm-info sync-btn" data-local-id="${r.local_id}">Sincronizar</button>
+              <button class="btn-sm-info recharge-toggle" data-local-id="${r.local_id}">Recargar</button>
+              <button class="btn-sm-danger delete-btn" data-local-id="${r.local_id}" data-name="${esc(r.nombre)}">Eliminar</button>
+            </div>
+          </td>
+        </tr>
+        <tr class="recharge-row" id="recharge-${r.local_id}">
+          <td colspan="5">
+            <div class="recharge-inner">
+              <span style="font-size:13px;color:var(--muted)">Créditos a recargar:</span>
+              <input type="number" class="recharge-amount" placeholder="ej: 50" min="1" style="width:110px">
+              <input type="text" class="recharge-nota" placeholder="Nota (ej: Pago USDT)" style="flex:1;min-width:160px">
+              <button class="btn btn-primary btn-sm do-recharge" data-local-id="${r.local_id}" style="white-space:nowrap">${ICON.send} Confirmar</button>
+              <span class="recharge-msg" style="font-size:13px"></span>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+
+      body.innerHTML = `
+        <table class="rev-table">
+          <thead><tr>
+            <th>Revendedor</th><th>Teléfono</th><th>Créditos</th><th>Estado</th><th>Acciones</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+
+      body.querySelectorAll('.sync-btn').forEach(btn =>
+        btn.addEventListener('click', () => syncRevendedor(btn.dataset.localId, btn)));
+      body.querySelectorAll('.recharge-toggle').forEach(btn =>
+        btn.addEventListener('click', () => toggleRecharge(btn.dataset.localId)));
+      body.querySelectorAll('.delete-btn').forEach(btn =>
+        btn.addEventListener('click', () => deleteRevendedor(btn.dataset.localId, btn.dataset.name)));
+      body.querySelectorAll('.do-recharge').forEach(btn =>
+        btn.addEventListener('click', () => doRecharge(btn.dataset.localId)));
+    } catch(e) {
+      body.innerHTML = `<div style="padding:20px;color:var(--danger);font-size:14px">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function toggleRecharge(localId){
+    const row = document.getElementById('recharge-'+localId);
+    if(!row) return;
+    row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
+  }
+
+  async function syncRevendedor(localId, btn){
+    const old = btn.textContent;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const res = await apiFetch('/api/saldo-revendedor', { revendedor_id: parseInt(localId) });
+      btn.textContent = '✓ '+(res?.data?.creditos ?? res?.data?.creditos_cache);
+      setTimeout(()=>{ btn.textContent=old; btn.disabled=false; loadRevendedores(); }, 1500);
+    } catch(e) {
+      btn.textContent = '✗ Error';
+      setTimeout(()=>{ btn.textContent=old; btn.disabled=false; }, 2000);
+    }
+  }
+
+  async function doRecharge(localId){
+    const row = document.getElementById('recharge-'+localId);
+    const amount = parseInt(row.querySelector('.recharge-amount').value);
+    const nota = row.querySelector('.recharge-nota').value.trim();
+    const msg = row.querySelector('.recharge-msg');
+    const btn = row.querySelector('.do-recharge');
+
+    if(!amount || amount < 1){ msg.style.color='var(--danger)'; msg.textContent='Cantidad inválida'; return; }
+
+    btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
+    msg.textContent='';
+    try {
+      const res = await apiFetch('/api/recargar-creditos', {
+        revendedor_id: parseInt(localId),
+        creditos: amount,
+        nota: nota || undefined,
+      });
+      msg.style.color='var(--accent)';
+      msg.textContent = `✓ ${res?.data?.creditos_antes} → ${res?.data?.creditos_despues} créditos`;
+      setTimeout(()=>{ row.style.display='none'; loadRevendedores(); }, 2000);
+    } catch(e) {
+      msg.style.color='var(--danger)';
+      msg.textContent = '✗ '+e.message;
+    } finally {
+      btn.disabled=false; btn.innerHTML=ICON.send+' Confirmar';
+    }
+  }
+
+  async function deleteRevendedor(localId, nombre){
+    if(!confirm(`¿Eliminar al revendedor "${nombre}"? Esta acción no se puede deshacer.`)) return;
+    try {
+      await apiFetch('/api/eliminar-revendedor', { revendedor_id: parseInt(localId) });
+      loadRevendedores();
+    } catch(e) {
+      alert('Error al eliminar: '+e.message);
+    }
+  }
+
+  async function createRevendedor(){
+    const nombre   = $('#rev_nombre').value.trim();
+    const telefono = $('#rev_telefono').value.trim();
+    const userId   = parseInt($('#rev_user_id').value);
+    const username = $('#rev_username').value.trim();
+    const apiKey   = $('#rev_api_key').value.trim();
+    const msgEl    = $('#createRevMsg');
+
+    if(!nombre || !userId || !username || !apiKey){
+      msgEl.style.color='var(--danger)'; msgEl.textContent='Completa los campos obligatorios.'; return;
+    }
+
+    const btn = $('#createRevBtn'); const old = btn.innerHTML;
+    btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Registrando…';
+    msgEl.textContent='';
+    try {
+      const payload = { nombre, xui_user_id: userId, xui_username: username, xui_api_key: apiKey };
+      if(telefono) payload.telefono = telefono;
+      const res = await apiFetch('/api/crear-revendedor', payload);
+      msgEl.style.color='var(--accent)';
+      msgEl.textContent = `✓ Revendedor registrado. Créditos actuales: ${res?.data?.revendedor?.creditos ?? '—'}`;
+      $('#rev_nombre').value=''; $('#rev_telefono').value=''; $('#rev_user_id').value='';
+      $('#rev_username').value=''; $('#rev_api_key').value='';
+      setTimeout(loadRevendedores, 800);
+    } catch(e) {
+      msgEl.style.color='var(--danger)';
+      msgEl.textContent = '✗ '+e.message;
+    } finally {
+      btn.disabled=false; btn.innerHTML=old;
+    }
   }
 
   // ---- Precios section ----
@@ -473,6 +709,7 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
   }
 
   function select(id){
+    if(id==='__revendedores__'){ renderRevendedores(); return; }
     if(id==='__precios__'){ renderPrecios(); return; }
     currentId = id;
     document.querySelectorAll('.nav-item').forEach(b=> b.classList.toggle('active', b.dataset.id===id));
