@@ -141,14 +141,26 @@ class PaymentController extends BaseController
 
             if ($dias <= 0) $this->error("Debes proporcionar 'dias' o 'package_id'.", 400);
 
-            // Look up price from DB table when package_id is provided (takes priority over request monto)
+            // Look up price: reseller's own price first, then global fallback
             if ($monto <= 0.0 && !empty($input['package_id'])) {
+                $pkgIdLookup = (int)$input['package_id'];
+                $revIdLookup = !empty($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
                 try {
-                    $stmt = \App\Database\Connection::getInstance()
-                        ->prepare("SELECT precio FROM precios_paquetes WHERE package_id = :id AND activo = 1 LIMIT 1");
-                    $stmt->execute([':id' => (int)$input['package_id']]);
-                    $row = $stmt->fetch();
-                    if ($row) $monto = (float)$row['precio'];
+                    $db = \App\Database\Connection::getInstance();
+                    // 1. Reseller custom price
+                    if ($revIdLookup) {
+                        $stmt = $db->prepare("SELECT precio FROM revendedor_precios WHERE revendedor_id = :rid AND package_id = :pid AND activo = 1 LIMIT 1");
+                        $stmt->execute([':rid' => $revIdLookup, ':pid' => $pkgIdLookup]);
+                        $row = $stmt->fetch();
+                        if ($row) $monto = (float)$row['precio'];
+                    }
+                    // 2. Global fallback
+                    if ($monto <= 0.0) {
+                        $stmt = $db->prepare("SELECT precio FROM precios_paquetes WHERE package_id = :id AND activo = 1 LIMIT 1");
+                        $stmt->execute([':id' => $pkgIdLookup]);
+                        $row = $stmt->fetch();
+                        if ($row) $monto = (float)$row['precio'];
+                    }
                 } catch (\Exception $e) { /* fall through */ }
             }
 
