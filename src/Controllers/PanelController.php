@@ -74,6 +74,7 @@ class PanelController extends BaseController
     {
         $input = $this->getRequestData();
         $includeTrials = !empty($input['incluir_trials']);
+        $revendedorId  = !empty($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
 
         try {
             $raw = $this->xuiService->request('get_packages', []);
@@ -82,17 +83,19 @@ class PanelController extends BaseController
                 $items = [];
             }
 
-            // Load prices from local DB (keyed by package_id)
+            // Load reseller prices from revendedor_precios
             $dbPrices = [];
-            try {
-                $rows = \App\Database\Connection::getInstance()
-                    ->query("SELECT package_id, precio, moneda, activo FROM precios_paquetes")
-                    ->fetchAll();
-                foreach ($rows as $r) {
-                    $dbPrices[(int)$r['package_id']] = $r;
+            if ($revendedorId) {
+                try {
+                    $stmt = \App\Database\Connection::getInstance()
+                        ->prepare("SELECT package_id, precio, moneda, activo FROM revendedor_precios WHERE revendedor_id = :rid");
+                    $stmt->execute([':rid' => $revendedorId]);
+                    foreach ($stmt->fetchAll() as $r) {
+                        $dbPrices[(int)$r['package_id']] = $r;
+                    }
+                } catch (\Exception $e) {
+                    // DB unavailable — prices will show as null
                 }
-            } catch (\Exception $e) {
-                // DB unavailable — prices will show as null
             }
 
             $packages = [];
