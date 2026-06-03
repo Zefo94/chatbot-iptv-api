@@ -470,13 +470,26 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
 
   # ── Subdominio ─────────────────────────────────────────────────────────────
   if [[ "$USE_DOMAIN" == "true" ]]; then
-    ask "Subdominio (Enter = api-${SLUG}.${DOMAIN_BASE}):"
+    echo -e "  ${DIM}Escribe solo el prefijo (ej: titipanel) — se añade .${DOMAIN_BASE} automáticamente${NC}"
+    echo -e "  ${DIM}O escribe el dominio completo si es diferente (ej: api.otrodominio.com)${NC}"
+    ask "Subdominio [Enter = api-${SLUG}.${DOMAIN_BASE}]:"
     read -r SUBDOMAIN
     if [[ -z "$SUBDOMAIN" ]]; then
       FULL_DOMAIN="api-${SLUG}.${DOMAIN_BASE}"
+    elif [[ "$SUBDOMAIN" == *"."* ]]; then
+      # Ya contiene puntos — puede ser prefijo+dominio o dominio completo
+      if [[ "$SUBDOMAIN" == *"${DOMAIN_BASE}" ]]; then
+        # Ya tiene el dominio base incluido — usarlo tal cual
+        FULL_DOMAIN="$SUBDOMAIN"
+      else
+        # Es un subdominio simple con punto (ej: api.titipanel) — añadir dominio base
+        FULL_DOMAIN="${SUBDOMAIN}.${DOMAIN_BASE}"
+      fi
     else
+      # Solo el prefijo (ej: titipanel) — añadir dominio base
       FULL_DOMAIN="${SUBDOMAIN}.${DOMAIN_BASE}"
     fi
+    info "Dominio final: $FULL_DOMAIN"
   else
     FULL_DOMAIN="$SERVER_IP"
     warn "Sin dominio — usará la IP $SERVER_IP (sin SSL)"
