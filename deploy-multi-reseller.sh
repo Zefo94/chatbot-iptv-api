@@ -80,27 +80,45 @@ apt-get update -qq
 # Nginx
 install_if_missing nginx
 
-# MySQL
-if ! command -v mysql &>/dev/null; then
-  info "Instalando MySQL Server..."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server -qq
-  systemctl enable mysql --now
-  log "MySQL instalado y activo"
+# MySQL / MariaDB — detectar cuál hay instalado
+if command -v mysql &>/dev/null; then
+  DB_ENGINE=$(mysql --version 2>/dev/null | grep -oi 'mariadb\|mysql' | head -1 | tr '[:upper:]' '[:lower:]')
+  log "Base de datos detectada: ${DB_ENGINE:-mysql/mariadb}"
 else
-  log "MySQL ya está instalado"
+  info "Instalando MariaDB..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server -qq
+  systemctl enable mariadb --now 2>/dev/null || systemctl enable mysql --now 2>/dev/null
+  log "MariaDB instalado y activo"
 fi
 
-# PHP 8.2 + extensiones
-if ! php -v &>/dev/null 2>&1 || ! php -m 2>/dev/null | grep -q pdo_mysql; then
-  info "Instalando PHP 8.2 y extensiones..."
+# PHP — detectar versión instalada, si no hay instalar 8.2
+PHP_VERSION=""
+if command -v php &>/dev/null; then
+  PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
+  if php -m 2>/dev/null | grep -q pdo_mysql; then
+    log "PHP $PHP_VERSION detectado con PDO MySQL"
+  else
+    info "PHP $PHP_VERSION encontrado pero falta pdo_mysql — instalando extensión..."
+    apt-get install -y "php${PHP_VERSION}-mysql" -qq 2>/dev/null || true
+  fi
+fi
+
+if [[ -z "$PHP_VERSION" ]]; then
+  info "Instalando PHP 8.2..."
   add-apt-repository ppa:ondrej/php -y -q 2>/dev/null || true
   apt-get update -qq
   apt-get install -y php8.2-fpm php8.2-cli php8.2-mysql php8.2-mbstring \
     php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath php8.2-intl -qq
+  PHP_VERSION="8.2"
   log "PHP 8.2 instalado"
-else
-  log "PHP ya está instalado ($(php -r 'echo PHP_VERSION;'))"
 fi
+
+# Asegurar que están instaladas todas las extensiones necesarias para la versión detectada
+for EXT in fpm cli mysql mbstring xml curl zip bcmath intl; do
+  if ! dpkg -l "php${PHP_VERSION}-${EXT}" &>/dev/null; then
+    apt-get install -y "php${PHP_VERSION}-${EXT}" -qq 2>/dev/null || true
+  fi
+done
 
 # Composer
 if ! command -v composer &>/dev/null; then
@@ -123,29 +141,43 @@ fi
 # Git
 install_if_missing git
 
-# Detectar socket PHP-FPM
-if [[ -S /run/php/php8.2-fpm.sock ]]; then
-  PHP_SOCK="unix:/run/php/php8.2-fpm.sock"
-elif [[ -S /var/run/php/php8.2-fpm.sock ]]; then
-  PHP_SOCK="unix:/var/run/php/php8.2-fpm.sock"
-else
-  # Iniciar FPM si no está corriendo
-  systemctl enable php8.2-fpm --now 2>/dev/null || true
+# Detectar socket PHP-FPM según la versión instalada
+detect_php_sock() {
+  local ver=$1
+  for path in \
+    "/run/php/php${ver}-fpm.sock" \
+    "/var/run/php/php${ver}-fpm.sock" \
+    "/run/php${ver}-fpm.sock"; do
+    if [[ -S "$path" ]]; then echo "unix:$path"; return; fi
+  done
+}
+
+PHP_SOCK=$(detect_php_sock "$PHP_VERSION")
+
+if [[ -z "$PHP_SOCK" ]]; then
+  # Iniciar FPM e intentar de nuevo
+  systemctl enable "php${PHP_VERSION}-fpm" --now 2>/dev/null || true
   sleep 2
-  if [[ -S /run/php/php8.2-fpm.sock ]]; then
-    PHP_SOCK="unix:/run/php/php8.2-fpm.sock"
-  elif [[ -S /var/run/php/php8.2-fpm.sock ]]; then
-    PHP_SOCK="unix:/var/run/php/php8.2-fpm.sock"
+  PHP_SOCK=$(detect_php_sock "$PHP_VERSION")
+fi
+
+# Si aún no hay socket buscar cualquier socket php-fpm disponible
+if [[ -z "$PHP_SOCK" ]]; then
+  FOUND_SOCK=$(find /run/php /var/run/php -name "php*-fpm.sock" 2>/dev/null | head -1)
+  if [[ -n "$FOUND_SOCK" ]]; then
+    PHP_SOCK="unix:$FOUND_SOCK"
+    warn "Usando socket encontrado: $PHP_SOCK"
   else
     PHP_SOCK="127.0.0.1:9000"
     warn "No se encontró socket PHP-FPM, usando TCP $PHP_SOCK"
   fi
 fi
+
 log "PHP-FPM socket: $PHP_SOCK"
 
 # Asegurarse de que Nginx y PHP-FPM están activos
 systemctl enable nginx --now 2>/dev/null || true
-systemctl enable php8.2-fpm --now 2>/dev/null || true
+systemctl enable "php${PHP_VERSION}-fpm" --now 2>/dev/null || true
 
 # =============================================================================
 #  PASO 1: Configuración de GitHub (SSH o HTTPS)
@@ -232,8 +264,30 @@ fi
 # =============================================================================
 section "PASO 2 — Configuración de revendedores"
 
+# ── Detectar instalación existente en /var/www/html ──────────────────────────
+EXISTING_HTML=""
+if [[ -f "/var/www/html/public/index.php" ]] && [[ -f "/var/www/html/.env" ]]; then
+  echo ""
+  warn "Se detectó una instalación existente en /var/www/html"
+  info "Este script NO la tocará — solo crea nuevas instancias en /var/www/chatbot-{slug}/"
+  echo ""
+  ask "¿Quieres incluir la instancia de /var/www/html en el resumen final? [S/n]:"
+  read -r INCLUDE_HTML
+  if [[ "${INCLUDE_HTML,,}" != "n" ]]; then
+    EXISTING_HTML="yes"
+    ask "¿Qué slug/nombre tiene ese revendedor? (ej: reseller1, principal):"
+    read -r HTML_SLUG
+    if [[ -z "$HTML_SLUG" ]]; then HTML_SLUG="principal"; fi
+    # Leer API key existente
+    EXISTING_API_KEY=$(grep "CHATBOT_API_KEY=" /var/www/html/.env 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || echo "ver /var/www/html/.env")
+    EXISTING_DB_NAME=$(grep "^DB_NAME=" /var/www/html/.env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "ver .env")
+    EXISTING_APP_URL=$(grep "^APP_URL=" /var/www/html/.env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "ver .env")
+    info "  Encontrado: URL=$EXISTING_APP_URL  BD=$EXISTING_DB_NAME"
+  fi
+fi
+
 echo ""
-ask "¿Cuántos revendedores quieres configurar? [1-10]:"
+ask "¿Cuántos revendedores NUEVOS quieres agregar? [1-10]:"
 read -r NUM_RESELLERS
 if ! [[ "$NUM_RESELLERS" =~ ^[0-9]+$ ]] || [[ "$NUM_RESELLERS" -lt 1 ]] || [[ "$NUM_RESELLERS" -gt 10 ]]; then
   error "Número inválido. Debe ser entre 1 y 10."
@@ -346,26 +400,30 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
 done
 
 # =============================================================================
-#  PASO 4: MySQL — contraseña root
+#  PASO 4: MySQL/MariaDB — contraseña root
 # =============================================================================
-section "PASO 4 — Configuración de MySQL"
+section "PASO 4 — Configuración de MySQL/MariaDB"
 
 echo ""
-warn "Para crear bases de datos necesito acceso al servidor MySQL."
-ask "Contraseña root de MySQL (Enter si no tiene):"
+warn "Para crear bases de datos necesito acceso al servidor MySQL/MariaDB."
+ask "Contraseña root de MySQL/MariaDB (Enter si no tiene o usa auth socket):"
 read -rs MYSQL_ROOT_PASS
 echo ""
 
-# Verificar acceso
+# Verificar acceso — intentar varias combinaciones (MySQL, MariaDB, socket auth)
+MYSQL_AUTH_SOCKET=false
 if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT 1" &>/dev/null 2>&1; then
-  log "Acceso MySQL verificado"
+  log "Acceso MySQL/MariaDB verificado (contraseña)"
 elif mysql -u root --socket=/var/run/mysqld/mysqld.sock -e "SELECT 1" &>/dev/null 2>&1; then
-  log "Acceso MySQL via socket verificado"
+  log "Acceso MariaDB via socket verificado"
+  MYSQL_ROOT_PASS=""
+elif mysql -u root --socket=/run/mysqld/mysqld.sock -e "SELECT 1" &>/dev/null 2>&1; then
+  log "Acceso MariaDB via socket /run/mysqld verificado"
   MYSQL_ROOT_PASS=""
 else
   warn "No se pudo conectar con esa contraseña. Intentando sin contraseña..."
   if mysql -u root -e "SELECT 1" &>/dev/null 2>&1; then
-    log "Acceso MySQL sin contraseña verificado"
+    log "Acceso MySQL/MariaDB sin contraseña verificado"
     MYSQL_ROOT_PASS=""
   else
     error "No se puede acceder a MySQL. Verifica la contraseña e intenta de nuevo."
@@ -722,8 +780,31 @@ echo "----------------------------------------------------------------------"
 } > "$SUMMARY_FILE"
 
 echo ""
-echo -e "${BOLD}${GREEN}  ✅ INSTALACIÓN COMPLETADA — $NUM_RESELLERS revendedor(es)${NC}"
+TOTAL_RES=$NUM_RESELLERS
+[[ "$EXISTING_HTML" == "yes" ]] && TOTAL_RES=$((NUM_RESELLERS + 1))
+echo -e "${BOLD}${GREEN}  ✅ INSTALACIÓN COMPLETADA — $TOTAL_RES revendedor(es) en total${NC}"
 echo ""
+
+# Mostrar reseller existente en /var/www/html si aplica
+if [[ "$EXISTING_HTML" == "yes" ]]; then
+  echo -e "${BOLD}${CYAN}  ┌─ Revendedor (existente): ${YELLOW}$HTML_SLUG${NC}  ${DIM}[/var/www/html]${NC}"
+  echo -e "${BOLD}${CYAN}  │${NC}  URL API:     ${GREEN}${EXISTING_APP_URL}${NC}"
+  echo -e "${BOLD}${CYAN}  │${NC}  API Key:     ${YELLOW}${EXISTING_API_KEY}${NC}"
+  echo -e "${BOLD}${CYAN}  │${NC}  BD MySQL:    ${DIM}${EXISTING_DB_NAME}${NC}"
+  echo -e "${BOLD}${CYAN}  │${NC}  Directorio:  ${DIM}/var/www/html${NC}"
+  echo -e "${BOLD}${CYAN}  └──────────────────────────────────────────────${NC}"
+  echo ""
+  {
+  echo "----------------------------------------------------------------------"
+  echo "REVENDEDOR (EXISTENTE): $HTML_SLUG  [/var/www/html]"
+  echo "----------------------------------------------------------------------"
+  echo "  URL API     : $EXISTING_APP_URL"
+  echo "  API Key     : $EXISTING_API_KEY"
+  echo "  BD MySQL    : $EXISTING_DB_NAME"
+  echo "  Directorio  : /var/www/html"
+  echo ""
+  } >> "$SUMMARY_FILE"
+fi
 
 for ((i=0; i<${#RES_SLUGS[@]}; i++)); do
   SLUG="${RES_SLUGS[$i]}"
