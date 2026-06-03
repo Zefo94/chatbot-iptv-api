@@ -101,25 +101,17 @@ if (str_starts_with($uri, '/reseller/api/')) {
         $stmt->execute([':rid' => $revId]);
         foreach ($stmt->fetchAll() as $r) $misPrecios[(int)$r['package_id']] = $r;
 
-        $globalPrecios = [];
-        foreach ($db->query("SELECT * FROM `precios_paquetes`")->fetchAll() as $r) {
-            $globalPrecios[(int)$r['package_id']] = $r;
-        }
-
-        $result = array_map(function($pkg) use ($misPrecios, $globalPrecios) {
+        $result = array_map(function($pkg) use ($misPrecios) {
             $pid  = (int)$pkg['id'];
             $mine = $misPrecios[$pid] ?? null;
-            $glob = $globalPrecios[$pid] ?? null;
             $durVal  = (int)($pkg['official_duration'] ?? 0);
             $durUnit = strtolower((string)($pkg['official_duration_in'] ?? ''));
             return [
                 'id'               => $pid,
                 'nombre'           => $pkg['package_name'] ?? '',
                 'duracion_humana'  => $durVal ? "{$durVal} {$durUnit}" : '—',
-                'precio_global'    => $glob ? (float)$glob['precio'] : 0.00,
-                'moneda_global'    => $glob ? $glob['moneda'] : 'EUR',
                 'precio_propio'    => $mine ? (float)$mine['precio'] : null,
-                'moneda_propia'    => $mine ? $mine['moneda'] : ($glob ? $glob['moneda'] : 'EUR'),
+                'moneda_propia'    => $mine ? $mine['moneda'] : 'EUR',
                 'activo'           => $mine ? (bool)$mine['activo'] : true,
                 'tiene_precio_propio' => $mine !== null,
             ];
@@ -360,8 +352,8 @@ $isAuth = !empty($_SESSION['rev_id']);
       if(!pkgs.length){ wrap.innerHTML='<div class="loading">No hay paquetes disponibles.</div>'; return; }
 
       const rows = pkgs.map(pkg => {
-        const precio = pkg.precio_propio !== null ? pkg.precio_propio : pkg.precio_global;
-        const moneda = pkg.moneda_propia || pkg.moneda_global;
+        const precio = pkg.precio_propio !== null ? pkg.precio_propio : 0.00;
+        const moneda = pkg.moneda_propia || 'EUR';
         const ownBadge = pkg.tiene_precio_propio ? '<span class="own-badge">propio</span>' : '';
         const monedaOpts = MONEDAS.map(m=>`<option value="${m}"${moneda===m?' selected':''}>${m}</option>`).join('');
         return `<tr data-pkg-id="${pkg.id}">
