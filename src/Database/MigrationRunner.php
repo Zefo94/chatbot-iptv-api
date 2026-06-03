@@ -85,7 +85,21 @@ class MigrationRunner
         $this->db->beginTransaction();
         try {
             foreach ($statements as $statement) {
-                $this->db->exec($statement);
+                try {
+                    $this->db->exec($statement);
+                } catch (\PDOException $e) {
+                    // Non-fatal: column/key already exists, or doesn't exist to drop
+                    // MySQL codes: 1060 duplicate column, 1061 duplicate key, 1091 can't drop
+                    $code = (int)$e->getCode();
+                    $msg  = $e->getMessage();
+                    $isNonFatal = in_array($code, [1060, 1061, 1091], true)
+                        || str_contains($msg, 'Duplicate column')
+                        || str_contains($msg, 'Duplicate key')
+                        || str_contains($msg, "Can't DROP");
+                    if (!$isNonFatal) {
+                        throw $e;
+                    }
+                }
             }
 
             $this->db->prepare(
