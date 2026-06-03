@@ -40,6 +40,12 @@ try {
     $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
     $requestMethod = $_SERVER['REQUEST_METHOD'];
 
+    // Admin dashboard (served directly, has its own session auth)
+    if (in_array($requestUri, ['/dashboard', '/dashboard/']) && in_array($requestMethod, ['GET', 'POST'])) {
+        require __DIR__ . '/dashboard.php';
+        exit;
+    }
+
     // PayPal redirect landing pages (GET, no auth required)
     if ($requestMethod === 'GET' && $requestUri === '/pago-exitoso') {
         header('Content-Type: text/html; charset=utf-8');
