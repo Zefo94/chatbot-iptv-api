@@ -82,6 +82,10 @@ class PanelController extends BaseController
                 $items = [];
             }
 
+            $config         = require dirname(__DIR__, 2) . '/config/payment.php';
+            $pricePerCredit = (float)($config['paypal']['price_per_credit'] ?? 0.0);
+            $currency       = strtoupper($config['paypal']['currency'] ?? 'EUR');
+
             $packages = [];
             foreach ($items as $p) {
                 if (!is_array($p)) continue;
@@ -89,8 +93,12 @@ class PanelController extends BaseController
                 if ($isTrial && !$includeTrials) continue;
 
                 $duration = (int)($p['official_duration'] ?? 0);
-                $unit = (string)($p['official_duration_in'] ?? '');
-                $days = $this->durationToDays($duration, $unit);
+                $unit     = (string)($p['official_duration_in'] ?? '');
+                $days     = $this->durationToDays($duration, $unit);
+                $credits  = (int)($p['official_credits'] ?? 0);
+                $precio   = ($pricePerCredit > 0 && $credits > 0)
+                    ? number_format($credits * $pricePerCredit, 2, '.', '')
+                    : null;
 
                 $packages[] = [
                     'id'              => (int)($p['id'] ?? 0),
@@ -100,7 +108,10 @@ class PanelController extends BaseController
                     'dias'            => $days,
                     'duracion_humana' => $this->humanDuration($duration, $unit),
                     'es_trial'        => $isTrial,
-                    'creditos'        => (int)($p['official_credits'] ?? 0),
+                    'creditos'        => $credits,
+                    'precio'          => $precio,
+                    'moneda'          => $currency,
+                    'precio_label'    => $precio !== null ? "{$precio} {$currency}" : null,
                 ];
             }
 
