@@ -74,7 +74,17 @@ class PanelController extends BaseController
     {
         $input = $this->getRequestData();
         $includeTrials = !empty($input['incluir_trials']);
-        $revendedorId  = !empty($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
+
+        // Resolve revendedor_id: from request or auto-detect the only one in this instance
+        $revendedorId = !empty($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
+        if (!$revendedorId) {
+            try {
+                $row = \App\Database\Connection::getInstance()
+                    ->query("SELECT id FROM `revendedores` LIMIT 1")
+                    ->fetch();
+                if ($row) $revendedorId = (int)$row['id'];
+            } catch (\Exception $e) { /* fall through */ }
+        }
 
         try {
             $raw = $this->xuiService->request('get_packages', []);
@@ -88,7 +98,7 @@ class PanelController extends BaseController
             if ($revendedorId) {
                 try {
                     $stmt = \App\Database\Connection::getInstance()
-                        ->prepare("SELECT package_id, precio, moneda, activo FROM revendedor_precios WHERE revendedor_id = :rid");
+                        ->prepare("SELECT package_id, precio, moneda, activo FROM revendedor_precios WHERE revendedor_id = :rid AND activo = 1");
                     $stmt->execute([':rid' => $revendedorId]);
                     foreach ($stmt->fetchAll() as $r) {
                         $dbPrices[(int)$r['package_id']] = $r;
