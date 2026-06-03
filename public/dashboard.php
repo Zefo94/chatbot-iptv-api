@@ -228,32 +228,6 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
   .create-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   @media(max-width:640px){.create-form-grid{grid-template-columns:1fr}}
 
-  /* ---------- Precios section ---------- */
-  .precios-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:4px}
-  .precios-header h1{font-size:22px;margin:0}
-  .precios-header p{color:var(--muted);font-size:13.5px;margin:0}
-  .precios-table{width:100%;border-collapse:collapse;margin-top:4px}
-  .precios-table th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)}
-  .precios-table td{padding:10px 12px;border-bottom:1px solid #1a2a40;vertical-align:middle}
-  .precios-table tr:last-child td{border-bottom:none}
-  .precios-table tr:hover td{background:rgba(255,255,255,.025)}
-  .precio-input{width:90px;text-align:right;padding:6px 8px;font-size:14px}
-  .moneda-select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;font-family:var(--mono);margin-left:4px;cursor:pointer}
-  .moneda-select:focus{border-color:var(--info);outline:none}
-  .save-row-btn{background:var(--accent);color:var(--accent-ink);border:none;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:filter .15s,opacity .15s;white-space:nowrap}
-  .save-row-btn:hover{filter:brightness(1.08)}
-  .save-row-btn:disabled{opacity:.5;cursor:not-allowed}
-  .row-msg{font-size:12px;margin-left:8px;opacity:0;transition:opacity .3s}
-  .row-msg.ok{color:var(--accent);opacity:1}
-  .row-msg.err{color:var(--danger);opacity:1}
-  .pkg-name{font-size:14px}
-  .pkg-id{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:6px}
-  .activo-toggle{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer}
-  .activo-toggle input{width:16px;height:16px;cursor:pointer;accent-color:var(--accent)}
-  .precios-reload{background:var(--surface-2);color:var(--text);border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background .15s}
-  .precios-reload:hover{background:#3f5170}
-  .precios-loading{color:var(--muted);font-size:14px;padding:24px 0;text-align:center}
-  .precios-error{color:var(--danger);font-size:14px;padding:16px 0}
 
   ::-webkit-scrollbar{width:10px;height:10px}
   ::-webkit-scrollbar-thumb{background:var(--surface-2);border-radius:6px}
@@ -262,7 +236,6 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
     .layout{grid-template-columns:1fr}
     nav{border-right:none;border-bottom:1px solid var(--border);max-height:230px}
     .cfg{width:100%}.cfg input{flex:1;min-width:0}
-    .precios-table th:nth-child(2),.precios-table td:nth-child(2){display:none}
   }
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -338,10 +311,6 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
         <button class="nav-item" data-id="__revendedores__">
           <span class="badge MGT">MGT</span>
           <span class="ttl">Revendedores</span>
-        </button>
-        <button class="nav-item" data-id="__precios__">
-          <span class="badge MGT">MGT</span>
-          <span class="ttl">Precios de Paquetes</span>
         </button>
       </div>`;
 
@@ -618,122 +587,6 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
     }
   }
 
-  // ---- Precios section ----
-  async function renderPrecios(){
-    currentId = '__precios__';
-    document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active', b.dataset.id==='__precios__'));
-    const main = $('#main');
-    main.innerHTML = `
-      <div class="precios-header">
-        <div>
-          <h1>Precios de Paquetes</h1>
-          <p style="margin-top:4px">Edita el precio de cada plan. Los cambios se aplican inmediatamente al chatbot.</p>
-        </div>
-        <button class="precios-reload" id="reloadPrecios">${ICON.refresh} Recargar</button>
-      </div>
-      <div class="card" style="padding:0;overflow:hidden;margin-top:20px">
-        <div id="preciosBody"><div class="precios-loading">Cargando precios…</div></div>
-      </div>`;
-    $('#reloadPrecios').addEventListener('click', loadPrecios);
-    await loadPrecios();
-  }
-
-  async function loadPrecios(){
-    const body = $('#preciosBody');
-    if(!body) return;
-    body.innerHTML = '<div class="precios-loading">Cargando…</div>';
-    try {
-      const [pkgRes, precRes] = await Promise.all([
-        apiFetch('/api/listar-paquetes', {}),
-        apiFetch('/api/listar-precios-paquetes', {})
-      ]);
-      const paquetes = pkgRes?.data?.paquetes || [];
-      const precios  = {};
-      (precRes?.data?.precios || []).forEach(r => { precios[r.package_id] = r; });
-
-      if (!paquetes.length) { body.innerHTML='<div class="precios-error" style="padding:20px">No se pudieron cargar los paquetes de XUI ONE. Verifica la X-API-Key y el Base URL.</div>'; return; }
-
-      const rows = paquetes.map(pkg => {
-        const db = precios[pkg.id] || {};
-        const precio = db.precio ?? pkg.precio ?? '0.00';
-        const moneda = db.moneda ?? pkg.moneda ?? 'EUR';
-        const activo = db.activo !== undefined ? db.activo : true;
-        return `<tr data-pkg-id="${pkg.id}">
-          <td><span class="pkg-name">${esc(pkg.nombre)}</span><span class="pkg-id">#${pkg.id}</span></td>
-          <td><span style="color:var(--muted);font-size:12px">${esc(pkg.duracion_humana||'')}</span></td>
-          <td>
-            <label class="activo-toggle">
-              <input type="checkbox" class="activo-chk" ${activo ? 'checked' : ''}>
-              Activo
-            </label>
-          </td>
-          <td>
-            <input type="number" class="precio-input" value="${esc(String(precio))}" min="0" step="0.01">
-            <select class="moneda-select">
-              ${['EUR','USD','GBP','MXN','COP','ARS','CLP','PEN','BRL'].map(c =>
-                `<option value="${c}" ${moneda===c?'selected':''}>${c}</option>`
-              ).join('')}
-            </select>
-          </td>
-          <td style="white-space:nowrap">
-            <button class="save-row-btn">Guardar</button>
-            <span class="row-msg"></span>
-          </td>
-        </tr>`;
-      }).join('');
-
-      body.innerHTML = `
-        <table class="precios-table">
-          <thead><tr>
-            <th>Paquete</th><th>Duración</th><th>Estado</th><th>Precio</th><th></th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`;
-
-      body.querySelectorAll('tr[data-pkg-id]').forEach(tr => {
-        tr.querySelector('.save-row-btn').addEventListener('click', () => saveRow(tr, paquetes));
-      });
-    } catch(e) {
-      body.innerHTML = `<div class="precios-error" style="padding:20px">Error: ${esc(e.message)}. Verifica la X-API-Key y el Base URL arriba.</div>`;
-    }
-  }
-
-  async function saveRow(tr, paquetes) {
-    const pkgId  = parseInt(tr.dataset.pkgId, 10);
-    const precio = parseFloat(tr.querySelector('.precio-input').value);
-    const moneda = tr.querySelector('.moneda-select').value;
-    const activo = tr.querySelector('.activo-chk').checked;
-    const btn    = tr.querySelector('.save-row-btn');
-    const msg    = tr.querySelector('.row-msg');
-    const pkg    = paquetes.find(p => p.id === pkgId) || {};
-
-    if (isNaN(precio) || precio < 0) { showRowMsg(msg, 'Precio inválido', false); return; }
-
-    btn.disabled = true;
-    btn.textContent = '…';
-    try {
-      await apiFetch('/api/actualizar-precio-paquete', {
-        package_id:   pkgId,
-        package_name: pkg.nombre || '',
-        precio:       precio,
-        moneda:       moneda,
-        activo:       activo,
-      });
-      showRowMsg(msg, '✓ Guardado', true);
-    } catch(e) {
-      showRowMsg(msg, '✗ Error', false);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Guardar';
-    }
-  }
-
-  function showRowMsg(el, text, ok) {
-    el.textContent = text;
-    el.className = 'row-msg ' + (ok ? 'ok' : 'err');
-    clearTimeout(el._t);
-    el._t = setTimeout(() => { el.className = 'row-msg'; el.textContent = ''; }, 2500);
-  }
 
   async function apiFetch(path, body) {
     const res = await fetch(cfg.base + path, {
@@ -762,7 +615,6 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
 
   function select(id){
     if(id==='__revendedores__'){ renderRevendedores(); return; }
-    if(id==='__precios__'){ renderPrecios(); return; }
     currentId = id;
     document.querySelectorAll('.nav-item').forEach(b=> b.classList.toggle('active', b.dataset.id===id));
     const ep = CATALOG.find(e=>e.id===id);
@@ -922,8 +774,7 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
   function cssEsc(s){ return String(s).replace(/[^a-zA-Z0-9_-]/g,'\\$&'); }
 
   buildNav();
-  // Open Precios by default
-  select('__precios__');
+  select('__revendedores__');
 })();
 </script>
 </body>
