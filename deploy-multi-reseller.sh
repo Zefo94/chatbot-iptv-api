@@ -667,10 +667,12 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
     git pull origin "$BRANCH" || warn "git pull falló, continuando con código existente"
   else
     mkdir -p "$(dirname "$APP_DIR")"
-    if [[ "$USE_SSH" == "true" ]]; then
-      GIT_SSH_COMMAND="ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no" \
+    if [[ "$USE_SSH" == "true" ]] && [[ -n "$SSH_KEY_PATH" ]]; then
+      # SSH con clave específica
+      GIT_SSH_COMMAND="ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no" \
         git clone -b "$BRANCH" "$CLONE_URL" "$APP_DIR"
     else
+      # SSH con clave del agente / config global, o HTTPS
       git clone -b "$BRANCH" "$CLONE_URL" "$APP_DIR"
     fi
   fi
