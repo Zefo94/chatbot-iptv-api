@@ -717,6 +717,7 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
       git clone -b "$BRANCH" "$CLONE_URL" "$APP_DIR"
     fi
   fi
+  git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
   log "Código en $APP_DIR"
 
   # ── Crear .env ────────────────────────────────────────────────────────────
