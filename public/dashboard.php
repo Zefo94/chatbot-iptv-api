@@ -403,6 +403,11 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
               <input id="rev_api_key" placeholder="ej: 52035387EB0A9C3E4CD8D6133B219493" spellcheck="false" style="font-family:var(--mono)">
               <div class="help">API Key del revendedor en XUI.ONE (no la del admin)</div>
             </div>
+            <div class="form-row">
+              <label>Contraseña panel <span class="req">*</span></label>
+              <input id="rev_password" type="password" placeholder="mín. 6 caracteres">
+              <div class="help">El revendedor usará esta contraseña para entrar en /reseller</div>
+            </div>
           </div>
           <div class="actions">
             <button class="btn btn-primary" id="createRevBtn">${ICON.send} Registrar revendedor</button>
@@ -439,7 +444,18 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
             <div class="rev-actions">
               <button class="btn-sm-info sync-btn" data-local-id="${r.local_id}">Sincronizar</button>
               <button class="btn-sm-info recharge-toggle" data-local-id="${r.local_id}">Recargar</button>
+              <button class="btn-sm-info passwd-toggle" data-local-id="${r.local_id}">Contraseña</button>
               <button class="btn-sm-danger delete-btn" data-local-id="${r.local_id}" data-name="${esc(r.nombre)}">Eliminar</button>
+            </div>
+          </td>
+        </tr>
+        <tr class="recharge-row" id="passwd-${r.local_id}" style="display:none">
+          <td colspan="5">
+            <div class="recharge-inner">
+              <span style="font-size:13px;color:var(--muted)">Nueva contraseña panel:</span>
+              <input type="password" class="passwd-input" placeholder="mín. 6 caracteres" style="width:200px">
+              <button class="btn btn-primary btn-sm do-passwd" data-local-id="${r.local_id}" style="white-space:nowrap">Guardar</button>
+              <span class="passwd-msg" style="font-size:13px"></span>
             </div>
           </td>
         </tr>
@@ -468,10 +484,14 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
         btn.addEventListener('click', () => syncRevendedor(btn.dataset.localId, btn)));
       body.querySelectorAll('.recharge-toggle').forEach(btn =>
         btn.addEventListener('click', () => toggleRecharge(btn.dataset.localId)));
+      body.querySelectorAll('.passwd-toggle').forEach(btn =>
+        btn.addEventListener('click', () => togglePasswd(btn.dataset.localId)));
       body.querySelectorAll('.delete-btn').forEach(btn =>
         btn.addEventListener('click', () => deleteRevendedor(btn.dataset.localId, btn.dataset.name)));
       body.querySelectorAll('.do-recharge').forEach(btn =>
         btn.addEventListener('click', () => doRecharge(btn.dataset.localId)));
+      body.querySelectorAll('.do-passwd').forEach(btn =>
+        btn.addEventListener('click', () => doSetPassword(btn.dataset.localId)));
     } catch(e) {
       body.innerHTML = `<div style="padding:20px;color:var(--danger);font-size:14px">Error: ${esc(e.message)}</div>`;
     }
@@ -481,6 +501,32 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
     const row = document.getElementById('recharge-'+localId);
     if(!row) return;
     row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
+  }
+
+  function togglePasswd(localId){
+    const row = document.getElementById('passwd-'+localId);
+    if(!row) return;
+    row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
+    if(row.style.display === 'table-row') row.querySelector('.passwd-input').focus();
+  }
+
+  async function doSetPassword(localId){
+    const row = document.getElementById('passwd-'+localId);
+    const password = row.querySelector('.passwd-input').value;
+    const msg = row.querySelector('.passwd-msg');
+    const btn = row.querySelector('.do-passwd');
+    if(!password || password.length < 6){ msg.style.color='var(--danger)'; msg.textContent='Mínimo 6 caracteres'; return; }
+    btn.disabled=true; btn.textContent='…'; msg.textContent='';
+    try {
+      await apiFetch('/api/set-reseller-password', { revendedor_id: parseInt(localId), password });
+      msg.style.color='var(--accent)'; msg.textContent='✓ Contraseña actualizada';
+      row.querySelector('.passwd-input').value='';
+      setTimeout(()=>{ row.style.display='none'; msg.textContent=''; }, 2000);
+    } catch(e) {
+      msg.style.color='var(--danger)'; msg.textContent='✗ '+e.message;
+    } finally {
+      btn.disabled=false; btn.textContent='Guardar';
+    }
   }
 
   async function syncRevendedor(localId, btn){
@@ -535,15 +581,19 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
   }
 
   async function createRevendedor(){
-    const nombre   = $('#rev_nombre').value.trim();
-    const telefono = $('#rev_telefono').value.trim();
-    const userId   = parseInt($('#rev_user_id').value);
-    const username = $('#rev_username').value.trim();
-    const apiKey   = $('#rev_api_key').value.trim();
-    const msgEl    = $('#createRevMsg');
+    const nombre    = $('#rev_nombre').value.trim();
+    const telefono  = $('#rev_telefono').value.trim();
+    const userId    = parseInt($('#rev_user_id').value);
+    const username  = $('#rev_username').value.trim();
+    const apiKey    = $('#rev_api_key').value.trim();
+    const password  = $('#rev_password').value;
+    const msgEl     = $('#createRevMsg');
 
-    if(!nombre || !userId || !username || !apiKey){
-      msgEl.style.color='var(--danger)'; msgEl.textContent='Completa los campos obligatorios.'; return;
+    if(!nombre || !userId || !username || !apiKey || !password){
+      msgEl.style.color='var(--danger)'; msgEl.textContent='Completa los campos obligatorios incluyendo la contraseña.'; return;
+    }
+    if(password.length < 6){
+      msgEl.style.color='var(--danger)'; msgEl.textContent='La contraseña debe tener al menos 6 caracteres.'; return;
     }
 
     const btn = $('#createRevBtn'); const old = btn.innerHTML;
@@ -553,10 +603,12 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
       const payload = { nombre, xui_user_id: userId, xui_username: username, xui_api_key: apiKey };
       if(telefono) payload.telefono = telefono;
       const res = await apiFetch('/api/crear-revendedor', payload);
+      // Set password right after creation
+      await apiFetch('/api/set-reseller-password', { revendedor_id: res?.data?.revendedor?.local_id, password });
       msgEl.style.color='var(--accent)';
-      msgEl.textContent = `✓ Revendedor registrado. Créditos actuales: ${res?.data?.revendedor?.creditos ?? '—'}`;
+      msgEl.textContent = `✓ Revendedor registrado. Créditos: ${res?.data?.revendedor?.creditos ?? '—'}. Puede entrar en /reseller`;
       $('#rev_nombre').value=''; $('#rev_telefono').value=''; $('#rev_user_id').value='';
-      $('#rev_username').value=''; $('#rev_api_key').value='';
+      $('#rev_username').value=''; $('#rev_api_key').value=''; $('#rev_password').value='';
       setTimeout(loadRevendedores, 800);
     } catch(e) {
       msgEl.style.color='var(--danger)';

@@ -309,6 +309,34 @@ class ResellerController extends BaseController
      * POST /api/eliminar-revendedor
      * Body: { "revendedor_id": 1 }
      */
+    public function setPassword(): void
+    {
+        $input = $this->getRequestData();
+        $this->validate($input, [
+            'revendedor_id' => 'required|integer',
+            'password'      => 'required|string',
+        ]);
+
+        $password = trim($input['password']);
+        if (strlen($password) < 6) {
+            $this->error("La contraseña debe tener al menos 6 caracteres.", 400);
+        }
+
+        try {
+            $reseller = $this->loadResellerOrFail((int)$input['revendedor_id']);
+            $hash = password_hash($password, PASSWORD_BCRYPT);
+            $db = Connection::getInstance();
+            $db->prepare("UPDATE `revendedores` SET `panel_password` = :p WHERE `id` = :id")
+               ->execute([':p' => $hash, ':id' => (int)$reseller['id']]);
+
+            LoggerService::logAction("SET_RESELLER_PASSWORD", ['revendedor_id' => $input['revendedor_id']], ['xui_username' => $reseller['xui_username']]);
+            $this->success("Contraseña actualizada.", ['xui_username' => $reseller['xui_username']]);
+        } catch (Exception $e) {
+            LoggerService::logFile("Error in set-reseller-password: " . $e->getMessage(), "error");
+            $this->error("Error al actualizar contraseña: " . $e->getMessage(), 500);
+        }
+    }
+
     public function eliminar(): void
     {
         $input = $this->getRequestData();

@@ -49,6 +49,12 @@ try {
         exit;
     }
 
+    // Reseller panel + its own API subroutes
+    if (str_starts_with($requestUri, '/reseller')) {
+        require __DIR__ . '/reseller.php';
+        exit;
+    }
+
     // PayPal redirect landing pages (GET, no auth required)
     if ($requestMethod === 'GET' && $requestUri === '/pago-exitoso') {
         header('Content-Type: text/html; charset=utf-8');
