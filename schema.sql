@@ -104,6 +104,21 @@ ALTER TABLE `ordenes` ADD COLUMN IF NOT EXISTS `revendedor_id` INT NULL AFTER `e
 ALTER TABLE `ordenes` ADD COLUMN IF NOT EXISTS `package_id`    INT NULL AFTER `revendedor_id`;
 ALTER TABLE `ordenes` ADD INDEX IF NOT EXISTS `idx_ord_revendedor` (`revendedor_id`);
 
+-- 7. Package prices (synced from XUI.ONE, editable locally)
+CREATE TABLE IF NOT EXISTS `precios_paquetes` (
+  `package_id`   INT NOT NULL PRIMARY KEY COMMENT 'XUI.ONE package ID',
+  `package_name` VARCHAR(150) NOT NULL DEFAULT '' COMMENT 'Name from XUI.ONE',
+  `duracion`     INT NOT NULL DEFAULT 0,
+  `duracion_unidad` VARCHAR(20) NOT NULL DEFAULT '',
+  `dias`         INT NOT NULL DEFAULT 0,
+  `creditos`     INT NOT NULL DEFAULT 0,
+  `precio`       DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  `moneda`       VARCHAR(10) NOT NULL DEFAULT 'EUR',
+  `activo`       TINYINT(1) NOT NULL DEFAULT 1,
+  `updated_at`   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_activo` (`activo`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Insert dynamic seed configurations/examples for structure verification
 INSERT INTO `logs` (`accion`, `request_json`, `response_json`) VALUES
 ('SYSTEM_INITIALIZATION', '{"status": "ready"}', '{"message": "IPTV Schema successfully initialized"}');

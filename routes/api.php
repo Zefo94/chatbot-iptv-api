@@ -25,6 +25,7 @@ return [
         '/api/webhook-pago'       => ['App\Controllers\PaymentController', 'webhook'],
         '/api/panel-consultar'    => ['App\Controllers\PanelController', 'consultar'],
         '/api/listar-paquetes'          => ['App\Controllers\PanelController',  'listarPaquetes'],
+        '/api/sincronizar-paquetes'      => ['App\Controllers\PreciosController', 'sincronizar'],
         '/api/listar-precios-paquetes'  => ['App\Controllers\PreciosController', 'listar'],
         '/api/actualizar-precio-paquete'=> ['App\Controllers\PreciosController', 'actualizar'],
         '/api/crear-revendedor'         => ['App\Controllers\ResellerController', 'crear'],

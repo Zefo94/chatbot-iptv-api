@@ -3,11 +3,83 @@
 namespace App\Controllers;
 
 use App\Database\Connection;
+use App\Services\XuiService;
 use App\Services\LoggerService;
 use Exception;
 
 class PreciosController extends BaseController
 {
+    /**
+     * Sync packages from XUI.ONE into local precios_paquetes table.
+     * Inserts new packages with precio=0, preserves existing prices.
+     *
+     * POST /api/sincronizar-paquetes
+     */
+    public function sincronizar(): void
+    {
+        try {
+            $xui  = new XuiService();
+            $raw  = $xui->request('get_packages', []);
+            $items = isset($raw['data']) && is_array($raw['data']) ? $raw['data'] : $raw;
+            if (!is_array($items)) {
+                $this->error("La respuesta de XUI.ONE no contiene paquetes.", 502);
+                return;
+            }
+
+            $db   = Connection::getInstance();
+            $stmt = $db->prepare("
+                INSERT INTO precios_paquetes
+                    (package_id, package_name, duracion, duracion_unidad, dias, creditos, precio, moneda, activo)
+                VALUES
+                    (:id, :name, :dur, :unit, :dias, :cred, :precio, :moneda, 1)
+                ON DUPLICATE KEY UPDATE
+                    package_name   = VALUES(package_name),
+                    duracion       = VALUES(duracion),
+                    duracion_unidad= VALUES(duracion_unidad),
+                    dias           = VALUES(dias),
+                    creditos       = VALUES(creditos)
+            ");
+
+            $synced = 0;
+            foreach ($items as $p) {
+                if (!is_array($p)) continue;
+                $dur   = (int)($p['official_duration']    ?? 0);
+                $unit  = (string)($p['official_duration_in'] ?? '');
+                $dias  = $this->durationToDays($dur, $unit);
+                $stmt->execute([
+                    ':id'     => (int)($p['id'] ?? 0),
+                    ':name'   => (string)($p['package_name'] ?? ''),
+                    ':dur'    => $dur,
+                    ':unit'   => $unit,
+                    ':dias'   => $dias,
+                    ':cred'   => (int)($p['official_credits'] ?? 0),
+                    ':precio' => 0.00,
+                    ':moneda' => 'EUR',
+                ]);
+                $synced++;
+            }
+
+            LoggerService::logAction("SINCRONIZAR_PAQUETES", [], ['total' => $synced]);
+            $this->success("Paquetes sincronizados correctamente.", ['total' => $synced]);
+
+        } catch (Exception $e) {
+            LoggerService::logFile("Error in sincronizar-paquetes: " . $e->getMessage(), 'error');
+            $this->error("Error al sincronizar paquetes: " . $e->getMessage(), 500);
+        }
+    }
+
+    private function durationToDays(int $value, string $unit): int
+    {
+        return match (strtolower(trim($unit))) {
+            'hours', 'hour'   => (int)ceil($value / 24),
+            'days',  'day'    => $value,
+            'weeks', 'week'   => $value * 7,
+            'months','month'  => $value * 30,
+            'years', 'year'   => $value * 365,
+            default           => $value,
+        };
+    }
+
     /**
      * GET list of all package prices from local DB.
      * POST /api/listar-precios-paquetes
