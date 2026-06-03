@@ -355,10 +355,12 @@ section "PASO 2 — Configuración de revendedores"
 
 # ── Leer plantilla del .env existente en /var/www/html ───────────────────────
 EXISTING_HTML=""
-TPL_XUI_URL=""; TPL_XUI_USER=""; TPL_XUI_PASS=""
+TPL_XUI_URL=""; TPL_XUI_APIKEY=""; TPL_XUI_USER=""; TPL_XUI_PASS=""
 TPL_XUI_RESELLER_URL=""; TPL_XUI_PKG_ID="1"; TPL_XUI_CONNS="1"
-TPL_PAYPAL_CID=""; TPL_PAYPAL_CSEC=""; TPL_MP_TOKEN=""
-TPL_WOMPI_PUB=""; TPL_WOMPI_PRIV=""
+TPL_PAYPAL_CID=""; TPL_PAYPAL_CSEC=""; TPL_PAYPAL_WEBHOOK_ID=""
+TPL_PAYPAL_MODE="sandbox"; TPL_PAYPAL_CURRENCY="EUR"; TPL_PAYPAL_PRICE="10.00"
+TPL_MP_TOKEN=""; TPL_WOMPI_PUB=""; TPL_WOMPI_PRIV=""
+TPL_DB_HOST="127.0.0.1"; TPL_DASHBOARD_PASS=""
 HAS_TEMPLATE=false
 
 _read_env() { grep "^${1}=" "$2" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true; }
@@ -368,28 +370,39 @@ if [[ -f "/var/www/html/public/index.php" ]] && [[ -f "/var/www/html/.env" ]]; t
   echo ""
   log "Instalación existente detectada en /var/www/html — leyendo configuración..."
 
-  TPL_XUI_URL=$(_read_env "XUI_API_URL"            "$ENV_FILE")
-  TPL_XUI_USER=$(_read_env "XUI_USERNAME"           "$ENV_FILE")
-  TPL_XUI_PASS=$(_read_env "XUI_PASSWORD"           "$ENV_FILE")
+  TPL_XUI_URL=$(_read_env "XUI_API_URL"             "$ENV_FILE")
+  TPL_XUI_APIKEY=$(_read_env "XUI_API_KEY"          "$ENV_FILE")   # auth principal del panel
+  TPL_XUI_USER=$(_read_env "XUI_USERNAME"            "$ENV_FILE")   # fallback si usa user/pass
+  TPL_XUI_PASS=$(_read_env "XUI_PASSWORD"            "$ENV_FILE")
   TPL_XUI_RESELLER_URL=$(_read_env "XUI_RESELLER_API_URL" "$ENV_FILE")
-  TPL_XUI_PKG_ID=$(_read_env "XUI_DEFAULT_PACKAGE_ID"    "$ENV_FILE")
-  TPL_XUI_CONNS=$(_read_env "XUI_DEFAULT_MAX_CONNECTIONS" "$ENV_FILE")
-  TPL_PAYPAL_CID=$(_read_env "PAYPAL_CLIENT_ID"     "$ENV_FILE")
+  TPL_XUI_PKG_ID=$(_read_env "XUI_DEFAULT_PACKAGE_ID"     "$ENV_FILE")
+  TPL_XUI_CONNS=$(_read_env "XUI_DEFAULT_MAX_CONNECTIONS"  "$ENV_FILE")
+  TPL_PAYPAL_CID=$(_read_env "PAYPAL_CLIENT_ID"      "$ENV_FILE")
   TPL_PAYPAL_CSEC=$(_read_env "PAYPAL_CLIENT_SECRET" "$ENV_FILE")
+  TPL_PAYPAL_WEBHOOK_ID=$(_read_env "PAYPAL_WEBHOOK_ID" "$ENV_FILE")
+  TPL_PAYPAL_MODE=$(_read_env "PAYPAL_MODE"          "$ENV_FILE")
+  TPL_PAYPAL_CURRENCY=$(_read_env "PAYPAL_CURRENCY"  "$ENV_FILE")
+  TPL_PAYPAL_PRICE=$(_read_env "PAYPAL_PRICE_PER_CREDIT" "$ENV_FILE")
   TPL_MP_TOKEN=$(_read_env "MERCADOPAGO_ACCESS_TOKEN" "$ENV_FILE")
-  TPL_WOMPI_PUB=$(_read_env "WOMPI_PUBLIC_KEY"      "$ENV_FILE")
-  TPL_WOMPI_PRIV=$(_read_env "WOMPI_PRIVATE_KEY"    "$ENV_FILE")
+  TPL_WOMPI_PUB=$(_read_env "WOMPI_PUBLIC_KEY"       "$ENV_FILE")
+  TPL_WOMPI_PRIV=$(_read_env "WOMPI_PRIVATE_KEY"     "$ENV_FILE")
+  TPL_DB_HOST=$(_read_env "DB_HOST"                  "$ENV_FILE")
+  TPL_DASHBOARD_PASS=$(_read_env "DASHBOARD_PASSWORD" "$ENV_FILE")
 
-  [[ -z "$TPL_XUI_PKG_ID" ]] && TPL_XUI_PKG_ID="1"
-  [[ -z "$TPL_XUI_CONNS"  ]] && TPL_XUI_CONNS="1"
+  [[ -z "$TPL_XUI_PKG_ID"      ]] && TPL_XUI_PKG_ID="1"
+  [[ -z "$TPL_XUI_CONNS"       ]] && TPL_XUI_CONNS="1"
   [[ -z "$TPL_XUI_RESELLER_URL" ]] && TPL_XUI_RESELLER_URL="$TPL_XUI_URL"
+  [[ -z "$TPL_PAYPAL_MODE"     ]] && TPL_PAYPAL_MODE="sandbox"
+  [[ -z "$TPL_PAYPAL_CURRENCY" ]] && TPL_PAYPAL_CURRENCY="EUR"
+  [[ -z "$TPL_PAYPAL_PRICE"    ]] && TPL_PAYPAL_PRICE="10.00"
+  [[ -z "$TPL_DB_HOST"         ]] && TPL_DB_HOST="127.0.0.1"
   HAS_TEMPLATE=true
 
   echo -e "  ${DIM}Plantilla cargada:${NC}"
-  [[ -n "$TPL_XUI_URL"  ]] && echo -e "  ${DIM}  XUI URL   : $TPL_XUI_URL${NC}"
-  [[ -n "$TPL_XUI_USER" ]] && echo -e "  ${DIM}  XUI User  : $TPL_XUI_USER${NC}"
-  [[ -n "$TPL_PAYPAL_CID" ]] && echo -e "  ${DIM}  PayPal    : configurado${NC}"
-  [[ -n "$TPL_MP_TOKEN"   ]] && echo -e "  ${DIM}  MercadoPago: configurado${NC}"
+  [[ -n "$TPL_XUI_URL"     ]] && echo -e "  ${DIM}  XUI URL    : $TPL_XUI_URL${NC}"
+  [[ -n "$TPL_XUI_APIKEY"  ]] && echo -e "  ${DIM}  XUI API Key: ${TPL_XUI_APIKEY:0:8}...${NC}"
+  [[ -n "$TPL_PAYPAL_CID"  ]] && echo -e "  ${DIM}  PayPal     : $TPL_PAYPAL_MODE / $TPL_PAYPAL_CURRENCY${NC}"
+  [[ -n "$TPL_MP_TOKEN"    ]] && echo -e "  ${DIM}  MercadoPago: configurado${NC}"
   echo ""
 
   ask "¿Incluir la instancia de /var/www/html en el resumen final? [S/n]:"
@@ -500,8 +513,9 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
   echo -e "  ${DIM}── Panel XUI.ONE ──${NC}"
 
   if [[ "$HAS_TEMPLATE" == "true" ]]; then
-    # Mismo panel — solo pedir la API key del revendedor en XUI
+    # Mismo panel — copiar todo y solo pedir la API key del revendedor
     XUI_URL="$TPL_XUI_URL"
+    XUI_APIKEY="$TPL_XUI_APIKEY"
     XUI_USER="$TPL_XUI_USER"
     XUI_PASS="$TPL_XUI_PASS"
     XUI_PKG_ID="$TPL_XUI_PKG_ID"
@@ -578,17 +592,24 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
   RESELLER_DATA["${i}_slug"]="$SLUG"
   RESELLER_DATA["${i}_domain"]="$FULL_DOMAIN"
   RESELLER_DATA["${i}_xui_url"]="$XUI_URL"
+  RESELLER_DATA["${i}_xui_apikey"]="${XUI_APIKEY:-}"
   RESELLER_DATA["${i}_xui_user"]="$XUI_USER"
   RESELLER_DATA["${i}_xui_pass"]="$XUI_PASS"
   RESELLER_DATA["${i}_xui_reseller_url"]="$XUI_RESELLER_URL"
   RESELLER_DATA["${i}_xui_reseller_apikey"]="${XUI_RESELLER_APIKEY:-}"
   RESELLER_DATA["${i}_xui_pkg_id"]="$XUI_PKG_ID"
   RESELLER_DATA["${i}_xui_conns"]="$XUI_CONNS"
-  RESELLER_DATA["${i}_paypal_cid"]="$PAYPAL_CID"
-  RESELLER_DATA["${i}_paypal_csec"]="$PAYPAL_CSEC"
+  RESELLER_DATA["${i}_paypal_cid"]="${PAYPAL_CID:-$TPL_PAYPAL_CID}"
+  RESELLER_DATA["${i}_paypal_csec"]="${PAYPAL_CSEC:-$TPL_PAYPAL_CSEC}"
+  RESELLER_DATA["${i}_paypal_webhook_id"]="${TPL_PAYPAL_WEBHOOK_ID:-}"
+  RESELLER_DATA["${i}_paypal_mode"]="${TPL_PAYPAL_MODE:-sandbox}"
+  RESELLER_DATA["${i}_paypal_currency"]="${TPL_PAYPAL_CURRENCY:-EUR}"
+  RESELLER_DATA["${i}_paypal_price"]="${TPL_PAYPAL_PRICE:-10.00}"
   RESELLER_DATA["${i}_mp_token"]="$MP_TOKEN"
   RESELLER_DATA["${i}_wompi_pub"]="$WOMPI_PUB"
   RESELLER_DATA["${i}_wompi_priv"]="$WOMPI_PRIV"
+  RESELLER_DATA["${i}_db_host"]="${TPL_DB_HOST:-127.0.0.1}"
+  RESELLER_DATA["${i}_dashboard_pass"]="${TPL_DASHBOARD_PASS:-}"
 
   echo -e "${BOLD}${GREEN}  ✓ Datos del revendedor '$SLUG' guardados${NC}"
 done
@@ -655,11 +676,18 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
   XUI_RESELLER_APIKEY="${RESELLER_DATA["${i}_xui_reseller_apikey"]:-}"
   XUI_PKG_ID="${RESELLER_DATA["${i}_xui_pkg_id"]}"
   XUI_CONNS="${RESELLER_DATA["${i}_xui_conns"]}"
+  XUI_APIKEY="${RESELLER_DATA["${i}_xui_apikey"]:-}"
   PAYPAL_CID="${RESELLER_DATA["${i}_paypal_cid"]}"
   PAYPAL_CSEC="${RESELLER_DATA["${i}_paypal_csec"]}"
+  PAYPAL_WEBHOOK_ID="${RESELLER_DATA["${i}_paypal_webhook_id"]:-}"
+  PAYPAL_MODE="${RESELLER_DATA["${i}_paypal_mode"]:-sandbox}"
+  PAYPAL_CURRENCY="${RESELLER_DATA["${i}_paypal_currency"]:-EUR}"
+  PAYPAL_PRICE="${RESELLER_DATA["${i}_paypal_price"]:-10.00}"
   MP_TOKEN="${RESELLER_DATA["${i}_mp_token"]}"
   WOMPI_PUB="${RESELLER_DATA["${i}_wompi_pub"]}"
   WOMPI_PRIV="${RESELLER_DATA["${i}_wompi_priv"]}"
+  DB_HOST_VAL="${RESELLER_DATA["${i}_db_host"]:-127.0.0.1}"
+  DASHBOARD_PASS="${RESELLER_DATA["${i}_dashboard_pass"]:-}"
 
   APP_DIR="${BASE_DIR}/chatbot-${SLUG}"
   DB_NAME="chatbot_${SLUG}"
@@ -714,12 +742,15 @@ CHATBOT_API_KEY=${CHATBOT_API_KEY}
 # Base de datos
 DB_HOST=127.0.0.1
 DB_PORT=3306
+DB_HOST=${DB_HOST_VAL}
+DB_PORT=3306
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASS=${DB_PASS}
 
 # XUI.ONE Panel
 XUI_API_URL=${XUI_URL}
+XUI_API_KEY=${XUI_APIKEY}
 XUI_USERNAME=${XUI_USER}
 XUI_PASSWORD=${XUI_PASS}
 XUI_RESELLER_API_URL=${XUI_RESELLER_URL}
@@ -730,9 +761,10 @@ XUI_DEFAULT_MAX_CONNECTIONS=${XUI_CONNS}
 # PayPal
 PAYPAL_CLIENT_ID=${PAYPAL_CID}
 PAYPAL_CLIENT_SECRET=${PAYPAL_CSEC}
-PAYPAL_MODE=live
-PAYPAL_CURRENCY=USD
-PAYPAL_PRICE_PER_CREDIT=10.00
+PAYPAL_WEBHOOK_ID=${PAYPAL_WEBHOOK_ID}
+PAYPAL_MODE=${PAYPAL_MODE}
+PAYPAL_CURRENCY=${PAYPAL_CURRENCY}
+PAYPAL_PRICE_PER_CREDIT=${PAYPAL_PRICE}
 
 # MercadoPago
 MERCADOPAGO_ACCESS_TOKEN=${MP_TOKEN}
@@ -746,6 +778,8 @@ WOMPI_WEBHOOK_SECRET=
 # Binance
 BINANCE_API_KEY=
 BINANCE_SECRET_KEY=
+
+DASHBOARD_PASSWORD=${DASHBOARD_PASS}
 ENVFILE
   chmod 600 "${APP_DIR}/.env"
   log ".env creado"
