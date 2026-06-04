@@ -16,6 +16,8 @@ if (file_exists($envFile)) {
     }
 }
 
+ini_set('session.gc_maxlifetime', 86400);
+session_set_cookie_params(['lifetime' => 86400, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax']);
 session_name('reseller_sess');
 session_start();
 
