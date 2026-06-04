@@ -80,9 +80,9 @@ class PanelController extends BaseController
         if (!$revendedorId) {
             try {
                 $row = \App\Database\Connection::getInstance()
-                    ->query("SELECT id FROM `revendedores` LIMIT 1")
+                    ->query("SELECT xui_user_id FROM `revendedores` LIMIT 1")
                     ->fetch();
-                if ($row) $revendedorId = (int)$row['id'];
+                if ($row) $revendedorId = (int)$row['xui_user_id'];
             } catch (\Exception $e) { /* fall through */ }
         }
 
