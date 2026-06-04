@@ -400,9 +400,12 @@ class PaymentService
                 try {
                     $pkgResp = $this->xuiService->requestAsAdmin('get_package', ['id' => $pkgId]);
                     $pkgData = isset($pkgResp['data']) && is_array($pkgResp['data']) ? $pkgResp['data'] : $pkgResp;
-                    foreach (['bouquet', 'vod_bouquet', 'series_bouquet'] as $field) {
-                        if (!empty($pkgData[$field])) {
-                            $editPayload[$field] = $pkgData[$field];
+                    // get_package returns "bouquets" (plural) as a JSON string like "[6,8,9]".
+                    // edit_line expects "bouquet" (singular) in the same format.
+                    $bouquetMap = ['bouquets' => 'bouquet', 'vod_bouquets' => 'vod_bouquet', 'series_bouquets' => 'series_bouquet'];
+                    foreach ($bouquetMap as $pkgField => $editField) {
+                        if (!empty($pkgData[$pkgField])) {
+                            $editPayload[$editField] = $pkgData[$pkgField];
                         }
                     }
                     LoggerService::logFile("resolveRenewal: package {$pkgId} bouquets fetched and included in edit_line payload.", "info");

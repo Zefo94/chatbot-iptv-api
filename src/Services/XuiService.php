@@ -317,6 +317,10 @@ class XuiService
                             if ($f === 'exp_date' && is_numeric($value)) {
                                 $value = date('Y-m-d H:i:s', (int)$value);
                             }
+                            // Never preserve empty bouquet arrays — sending [] actively clears all streams
+                            if (in_array($f, ['bouquet', 'vod_bouquet', 'series_bouquet'], true)) {
+                                if ($value === '[]' || $value === [] || $value === '' || $value === '0') continue;
+                            }
                             $data[$f] = $value;
                         }
                     }
