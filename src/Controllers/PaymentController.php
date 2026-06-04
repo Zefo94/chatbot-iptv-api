@@ -131,17 +131,11 @@ class PaymentController extends BaseController
                         $this->error("No se pudo determinar la duración del package_id={$pkgId}.", 400);
                     }
                 }
-                if ($monto <= 0.0) {
-                    $monto = $this->paymentService->priceFromPackage($pkgId);
-                    if ($monto <= 0.0) {
-                        $this->error("No se pudo calcular el precio del package_id={$pkgId}. Configura PAYPAL_PRICE_PER_CREDIT en .env.", 400);
-                    }
-                }
             }
 
             if ($dias <= 0) $this->error("Debes proporcionar 'dias' o 'package_id'.", 400);
 
-            // Look up reseller's own configured price
+            // Reseller price takes full priority over any fallback
             if ($monto <= 0.0 && !empty($input['package_id']) && !empty($input['revendedor_id'])) {
                 try {
                     $stmt = \App\Database\Connection::getInstance()
