@@ -146,7 +146,10 @@ class PaymentController extends BaseController
                 } catch (\Exception $e) { /* fall through */ }
             }
 
-            if ($monto <= 0) $this->error("No se encontró precio configurado para este paquete.", 400);
+            if ($monto <= 0) {
+                LoggerService::logFile("crearPagoPayPal: no price found for revendedor_id=" . ($input['revendedor_id'] ?? 'null') . " package_id=" . ($input['package_id'] ?? 'null') . " monto_input=" . ($input['monto'] ?? '0'), "warning");
+                $this->error("No se encontró precio configurado para este paquete.", 400);
+            }
 
             $revendedorId = !empty($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
             $pkgIdForOrder = isset($input['package_id']) ? (int)$input['package_id'] : null;
