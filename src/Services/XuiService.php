@@ -297,7 +297,7 @@ class XuiService
         // Fields this panel resets to defaults when omitted from edit_line. We always pull the
         // current values and only let $data override them so partial edits (e.g. only password)
         // don't wipe unrelated state.
-        $preserveFields = ['username', 'password', 'exp_date', 'max_connections'];
+        $preserveFields = ['username', 'password', 'exp_date', 'max_connections', 'package_id', 'bouquet', 'vod_bouquet', 'series_bouquet', 'member_group_id'];
         $missingAny = false;
         foreach ($preserveFields as $f) {
             if (!isset($data[$f])) {

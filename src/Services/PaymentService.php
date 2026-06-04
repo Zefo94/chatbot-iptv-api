@@ -387,11 +387,28 @@ class PaymentService
             $newExpirationTimestamp = $baseTimestamp + $secondsToExtend;
             $newExpirationFormatted = date('Y-m-d H:i:s', $newExpirationTimestamp);
 
-            // 5. Update expiry via admin API — resselerapi ignora silenciosamente exp_date.
+            // 5. Update expiry + package via admin API.
+            // The reseller API silently ignores exp_date; admin API is used here.
+            // XUI.ONE admin edit_line does NOT auto-assign a package's bouquets when only
+            // package_id is passed — bouquets must be sent explicitly, otherwise the line
+            // loses all its stream/channel assignments after renewal.
             $creditosDeducidos = 0;
             $editPayload = ['exp_date' => $newExpirationFormatted];
             if (!empty($order['package_id'])) {
-                $editPayload['package_id'] = (int)$order['package_id'];
+                $pkgId = (int)$order['package_id'];
+                $editPayload['package_id'] = $pkgId;
+                try {
+                    $pkgResp = $this->xuiService->requestAsAdmin('get_package', ['id' => $pkgId]);
+                    $pkgData = isset($pkgResp['data']) && is_array($pkgResp['data']) ? $pkgResp['data'] : $pkgResp;
+                    foreach (['bouquet', 'vod_bouquet', 'series_bouquet'] as $field) {
+                        if (!empty($pkgData[$field])) {
+                            $editPayload[$field] = $pkgData[$field];
+                        }
+                    }
+                    LoggerService::logFile("resolveRenewal: package {$pkgId} bouquets fetched and included in edit_line payload.", "info");
+                } catch (\Exception $e) {
+                    LoggerService::logFile("resolveRenewal: could not fetch bouquets for package {$pkgId}, edit_line will rely on editLine preserve logic: " . $e->getMessage(), "warning");
+                }
             }
             $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
 
