@@ -66,7 +66,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
 
     $revId = (int)$_SESSION['rev_id'];
     $db    = \App\Database\Connection::getInstance();
-    $stmt  = $db->prepare("SELECT * FROM `revendedores` WHERE `id` = :id AND `active` = 1 LIMIT 1");
+    $stmt  = $db->prepare("SELECT * FROM `revendedores` WHERE `xui_user_id` = :id AND `active` = 1 LIMIT 1");
     $stmt->execute([':id' => $revId]);
     $rev   = $stmt->fetch();
     if (!$rev) { session_destroy(); $err('Revendedor no encontrado.', 401); }
@@ -81,7 +81,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
         } finally {
             $xui->clearResellerAuth();
         }
-        $db->prepare("UPDATE `revendedores` SET `creditos_cache` = :c WHERE `id` = :id")
+        $db->prepare("UPDATE `revendedores` SET `creditos_cache` = :c WHERE `xui_user_id` = :id")
            ->execute([':c' => $creditos, ':id' => $revId]);
         $ok('OK', ['nombre' => $rev['nombre'], 'xui_username' => $rev['xui_username'], 'creditos' => $creditos]);
     }
