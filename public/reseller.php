@@ -227,10 +227,50 @@ $isAuth = !empty($_SESSION['rev_id']);
 
   ::-webkit-scrollbar{width:8px;height:8px}
   ::-webkit-scrollbar-thumb{background:var(--surface-2);border-radius:6px}
-  @media(max-width:640px){
-    .pkg-table th:nth-child(2),.pkg-table td:nth-child(2){display:none}
-    main{padding:16px}
+
+  @media(max-width:600px){
+    /* Header */
+    header{padding:10px 14px;gap:8px}
+    .header-brand{font-size:14px}
+    .header-right{gap:8px;flex-wrap:wrap;width:100%}
+    .user-pill{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .credits-pill{font-size:12px;padding:4px 10px}
+    .logout-btn{padding:8px 12px;font-size:13px;min-height:36px}
+
+    /* Main */
+    main{padding:12px}
+    .page-title{font-size:18px}
+    .login-card{padding:28px 18px;margin:16px}
+
+    /* Table → Cards */
+    .pkg-table thead{display:none}
+    .pkg-table tbody{display:flex;flex-direction:column;gap:10px;padding:12px}
+    .pkg-table tr{display:flex;flex-direction:column;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px}
+    .pkg-table tr:hover td{background:transparent}
+    .pkg-table td{display:block;padding:0;border:none;font-size:14px}
+
+    /* Package name row */
+    .pkg-table td:first-child{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+
+    /* Duration row */
+    .pkg-table td:nth-child(2)::before{content:'Duración: ';color:var(--muted);font-size:12px}
+    .dur{font-size:13px}
+
+    /* Active toggle */
+    .activo-wrap{font-size:14px}
+    .activo-wrap input{width:18px;height:18px}
+
+    /* Price row */
+    .price-wrap{flex-wrap:nowrap;width:100%}
+    .price-input{flex:1;min-width:0;width:auto;font-size:16px}
+    .moneda-sel{font-size:14px}
+
+    /* Save button — full width, touch friendly */
+    .pkg-table td:last-child{display:flex;flex-direction:column;gap:6px}
+    .save-btn{width:100%;padding:12px;font-size:15px;border-radius:8px;min-height:44px}
+    .row-msg{margin-left:0;text-align:center}
   }
+
   @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
