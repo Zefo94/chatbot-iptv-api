@@ -49,7 +49,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
             $err('Usuario o contraseña incorrectos.', 401);
         }
 
-        $_SESSION['rev_id']       = (int)$rev['id'];
+        $_SESSION['rev_id']       = (int)$rev['xui_user_id'];
         $_SESSION['rev_nombre']   = $rev['nombre'];
         $_SESSION['rev_username'] = $rev['xui_username'];
         $ok('Sesión iniciada.', ['nombre' => $rev['nombre']]);
