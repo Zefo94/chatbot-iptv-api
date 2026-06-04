@@ -120,9 +120,10 @@ class PanelController extends BaseController
                 $credits   = (int)($p['official_credits'] ?? 0);
                 $pkgId     = (int)($p['id'] ?? 0);
                 $dbRow     = $dbPrices[$pkgId] ?? null;
-                $precio    = $dbRow ? number_format((float)$dbRow['precio'], 2, '.', '') : null;
-                $moneda    = $dbRow ? strtoupper($dbRow['moneda']) : 'EUR';
-                $activo    = $dbRow ? (bool)$dbRow['activo'] : true;
+                if (!$dbRow) continue;
+                $precio    = number_format((float)$dbRow['precio'], 2, '.', '');
+                $moneda    = strtoupper($dbRow['moneda']);
+                $activo    = (bool)$dbRow['activo'];
 
                 $packages[] = [
                     'id'              => $pkgId,
