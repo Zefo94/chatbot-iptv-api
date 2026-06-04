@@ -387,33 +387,50 @@ class PaymentService
             $newExpirationTimestamp = $baseTimestamp + $secondsToExtend;
             $newExpirationFormatted = date('Y-m-d H:i:s', $newExpirationTimestamp);
 
-            // 5. Update expiry + package via admin API.
-            // The reseller API silently ignores exp_date; admin API is used here.
-            // XUI.ONE admin edit_line does NOT auto-assign a package's bouquets when only
-            // package_id is passed — bouquets must be sent explicitly, otherwise the line
-            // loses all its stream/channel assignments after renewal.
+            // 5. Renew via reseller API when possible — it preserves bouquets and extends
+            //    exp_date by the package duration automatically.
+            //    Admin API edit_line ignores all bouquet params (confirmed via direct API tests)
+            //    and always resets them to [], so it cannot be used for renewals with packages.
             $creditosDeducidos = 0;
-            $editPayload = ['exp_date' => $newExpirationFormatted];
-            if (!empty($order['package_id'])) {
-                $pkgId = (int)$order['package_id'];
-                $editPayload['package_id'] = $pkgId;
+            $xuiUpdate         = [];
+            $resellerApiKey    = null;
+
+            if (!empty($order['revendedor_id'])) {
                 try {
-                    $pkgResp = $this->xuiService->requestAsAdmin('get_package', ['id' => $pkgId]);
-                    $pkgData = isset($pkgResp['data']) && is_array($pkgResp['data']) ? $pkgResp['data'] : $pkgResp;
-                    // get_package returns "bouquets" (plural) as a JSON string like "[6,8,9]".
-                    // edit_line expects "bouquet" (singular) in the same format.
-                    $bouquetMap = ['bouquets' => 'bouquet', 'vod_bouquets' => 'vod_bouquet', 'series_bouquets' => 'series_bouquet'];
-                    foreach ($bouquetMap as $pkgField => $editField) {
-                        if (!empty($pkgData[$pkgField])) {
-                            $editPayload[$editField] = $pkgData[$pkgField];
-                        }
-                    }
-                    LoggerService::logFile("resolveRenewal: package {$pkgId} bouquets fetched and included in edit_line payload.", "info");
+                    $userInfo    = $this->xuiService->requestAsAdmin('get_user', ['id' => (int)$order['revendedor_id']]);
+                    $userData    = isset($userInfo['data']) && is_array($userInfo['data']) ? $userInfo['data'] : $userInfo;
+                    $resellerApiKey = !empty($userData['api_key']) ? (string)$userData['api_key'] : null;
                 } catch (\Exception $e) {
-                    LoggerService::logFile("resolveRenewal: could not fetch bouquets for package {$pkgId}, edit_line will rely on editLine preserve logic: " . $e->getMessage(), "warning");
+                    LoggerService::logFile("resolveRenewal: could not fetch reseller API key for xui_id={$order['revendedor_id']}: " . $e->getMessage(), "warning");
                 }
             }
-            $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
+
+            if ($resellerApiKey && !empty($order['package_id'])) {
+                // Reseller API: assigns package bouquets + extends exp_date by package duration
+                $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
+                LoggerService::logFile("resolveRenewal: renewed line {$lineId} via reseller API (bouquets preserved).", "info");
+
+                // Read back the actual exp_date XUI.ONE set so local DB stays accurate
+                try {
+                    $updatedLine = $this->xuiService->getLine($lineId);
+                    $updatedData = isset($updatedLine['data']) && is_array($updatedLine['data']) ? $updatedLine['data'] : $updatedLine;
+                    $actualExpTs = isset($updatedData['exp_date']) && is_numeric($updatedData['exp_date'])
+                        ? (int)$updatedData['exp_date'] : null;
+                    if ($actualExpTs) {
+                        $newExpirationFormatted = date('Y-m-d H:i:s', $actualExpTs);
+                    }
+                } catch (\Exception $e) {
+                    LoggerService::logFile("resolveRenewal: could not read back exp_date after reseller renewal: " . $e->getMessage(), "warning");
+                }
+            } else {
+                // Fallback: admin API (clears bouquets but at least renews the line)
+                LoggerService::logFile("resolveRenewal: falling back to admin API for line {$lineId} (no reseller key or no package_id).", "warning");
+                $editPayload = ['exp_date' => $newExpirationFormatted];
+                if (!empty($order['package_id'])) {
+                    $editPayload['package_id'] = (int)$order['package_id'];
+                }
+                $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
+            }
 
             // XUI API does NOT auto-deduct credits even with reseller auth — always deduct manually
             if (!empty($order['revendedor_id']) && !empty($order['package_id'])) {

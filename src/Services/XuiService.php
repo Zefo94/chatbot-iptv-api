@@ -349,6 +349,38 @@ class XuiService
     }
 
     /**
+     * Renew a line using the reseller's own API key.
+     *
+     * The reseller API edit_line:
+     *  - Correctly assigns the package's bouquets (admin API ignores bouquet params entirely)
+     *  - Extends exp_date by the package duration from the current exp_date automatically
+     *  - Does NOT expose exp_date as a settable field (it's calculated by the panel)
+     *
+     * Use this instead of editLineAsAdmin for all payment-triggered renewals.
+     */
+    public function renewLineAsReseller(int $lineId, int $packageId, string $resellerApiKey): array
+    {
+        $current     = $this->getLine($lineId);
+        $currentData = isset($current['data']) && is_array($current['data']) ? $current['data'] : $current;
+
+        $params = [
+            'id'              => $lineId,
+            'package'         => $packageId,
+            'package_id'      => $packageId,
+            'username'        => (string)($currentData['username']        ?? ''),
+            'password'        => (string)($currentData['password']        ?? ''),
+            'max_connections' => (int)($currentData['max_connections']    ?? 1),
+        ];
+
+        $this->useResellerAuth($resellerApiKey);
+        try {
+            return $this->request('edit_line', $params);
+        } finally {
+            $this->clearResellerAuth();
+        }
+    }
+
+    /**
      * Delete an IPTV Line
      */
     public function deleteLine(int $lineId): array
