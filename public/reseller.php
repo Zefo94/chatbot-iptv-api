@@ -262,8 +262,8 @@ $isAuth = !empty($_SESSION['rev_id']);
 
     /* Price row */
     .price-wrap{flex-wrap:nowrap;width:100%}
-    .price-input{flex:1;min-width:0;width:auto;font-size:16px}
-    .moneda-sel{font-size:14px}
+    .price-input{flex:1;min-width:0;width:auto!important;font-size:16px}
+    .moneda-sel{flex-shrink:0;width:76px!important;font-size:13px}
 
     /* Save button — full width, touch friendly */
     .pkg-table td:last-child{display:flex;flex-direction:column;gap:6px}
