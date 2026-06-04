@@ -408,7 +408,7 @@ $isAuth = !empty($_SESSION['rev_id']);
           </td>
           <td>
             <div class="price-wrap">
-              <input type="number" class="price-input" value="${precio.toFixed(2)}" min="0" step="0.01">
+              <input type="text" inputmode="decimal" class="price-input" value="${precio.toFixed(2)}" min="0" step="0.01">
               <select class="moneda-sel">${monedaOpts}</select>
             </div>
           </td>
