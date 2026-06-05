@@ -432,12 +432,26 @@ class PaymentService
                 $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
             }
 
-            // XUI API does NOT auto-deduct credits even with reseller auth — always deduct manually
-            if (!empty($order['revendedor_id']) && !empty($order['package_id'])) {
+            // Reseller API edit_line (with package param) auto-deducts credits in XUI.ONE.
+            // Only run manual deduction when the admin API fallback was used (reseller API was unavailable).
+            if (!$resellerApiKey && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
                 try {
                     $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
                 } catch (Exception $creditEx) {
                     LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']}: " . $creditEx->getMessage(), "warning");
+                }
+            } elseif ($resellerApiKey && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
+                // Credits were auto-deducted by XUI.ONE reseller API — just sync the local cache
+                try {
+                    $userInfo = $this->xuiService->requestAsAdmin('get_user', ['id' => (int)$order['revendedor_id']]);
+                    $userData = isset($userInfo['data']) && is_array($userInfo['data']) ? $userInfo['data'] : $userInfo;
+                    $newBalance = (int)($userData['credits'] ?? 0);
+                    $db->prepare("UPDATE `revendedores` SET `creditos_cache` = :c WHERE `xui_user_id` = :id")
+                       ->execute([':c' => $newBalance, ':id' => (int)$order['revendedor_id']]);
+                    LoggerService::logFile("Credits auto-deducted by XUI.ONE reseller API. New balance synced: {$newBalance}", "info");
+                    $creditosDeducidos = -1; // sentinel: auto by XUI
+                } catch (\Exception $e) {
+                    LoggerService::logFile("WARN: Could not sync reseller credit cache after reseller API renewal: " . $e->getMessage(), "warning");
                 }
             }
 
