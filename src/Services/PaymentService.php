@@ -29,15 +29,31 @@ class PaymentService
      */
     public function createOrder(int $lineId, int $dias, float $monto, ?int $revendedorId = null, ?int $packageId = null): array
     {
-        // 1. Verify that the line_id actually exists in XUI.ONE before making an order
+        // 1. Verify that the line_id actually exists in XUI.ONE before making an order.
+        //    If XUI.ONE returns STATUS_FAILURE the line was deleted — auto-clean the stale
+        //    clientes record so the customer can re-link without manual DB intervention.
         try {
             $line = $this->xuiService->getLine($lineId);
             if (empty($line)) {
                 throw new Exception("Line with ID {$lineId} not found in XUI.ONE.");
             }
         } catch (Exception $e) {
-            LoggerService::logFile("Order creation blocked: Line {$lineId} could not be validated in XUI.ONE. " . $e->getMessage(), "warning");
-            throw new Exception("No se pudo verificar la línea en el panel de control: " . $e->getMessage());
+            $msg = $e->getMessage();
+            LoggerService::logFile("Order creation blocked: Line {$lineId} could not be validated in XUI.ONE. {$msg}", "warning");
+
+            // STATUS_FAILURE = line no longer exists in XUI.ONE → purge stale local record
+            if (stripos($msg, 'STATUS_FAILURE') !== false) {
+                try {
+                    $db = Connection::getInstance();
+                    $db->prepare("DELETE FROM `clientes` WHERE `line_id` = :lid")->execute([':lid' => $lineId]);
+                    LoggerService::logFile("Auto-purged stale clientes record for deleted line_id={$lineId}.", "info");
+                } catch (\Exception $dbEx) {
+                    LoggerService::logFile("Could not purge stale record for line_id={$lineId}: " . $dbEx->getMessage(), "warning");
+                }
+                throw new Exception("LINE_NOT_FOUND: La línea asociada a tu cuenta fue eliminada del panel. Por favor contacta al soporte para reactivarla.");
+            }
+
+            throw new Exception("No se pudo verificar la línea en el panel de control: {$msg}");
         }
 
         $db = Connection::getInstance();
