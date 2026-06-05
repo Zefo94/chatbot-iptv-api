@@ -146,6 +146,21 @@ if (str_starts_with($uri, '/reseller/api/')) {
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $desde)) $desde = date('Y-m-d', strtotime('-30 days'));
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $hasta)) $hasta = date('Y-m-d');
 
+        // Timezone offset from browser (JS getTimezoneOffset() = minutes to ADD to local to get UTC)
+        // Clamped to [-840, 840] to reject garbage values
+        $tzOffset = max(-840, min(840, (int)($input['tz_offset'] ?? 0)));
+
+        // Convert local date boundaries to UTC datetime strings for querying
+        // Local midnight in UTC = midnight + tzOffset minutes
+        [$dy, $dm, $dd] = explode('-', $desde);
+        [$hy, $hm, $hd] = explode('-', $hasta);
+        $desdeUtc = gmdate('Y-m-d H:i:s', gmmktime(0,  0,  0,  (int)$dm, (int)$dd, (int)$dy) + $tzOffset * 60);
+        $hastaUtc = gmdate('Y-m-d H:i:s', gmmktime(23, 59, 59, (int)$hm, (int)$hd, (int)$hy) + $tzOffset * 60);
+
+        // For GROUP BY local date: shift stored UTC to local time before extracting date
+        // local_time = UTC - tzOffset minutes  →  DATE_SUB(created_at, INTERVAL :tz MINUTE)
+        $params = [':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc, ':tz' => $tzOffset];
+
         // Resumen general
         $stmt = $db->prepare("
             SELECT COUNT(*) as total_ordenes,
@@ -154,22 +169,24 @@ if (str_starts_with($uri, '/reseller/api/')) {
             FROM `ordenes`
             WHERE `revendedor_id` = :rid
               AND `estado` = 'completed'
-              AND DATE(`created_at`) BETWEEN :desde AND :hasta
+              AND `created_at` BETWEEN :desde AND :hasta
         ");
-        $stmt->execute([':rid' => $revId, ':desde' => $desde, ':hasta' => $hasta]);
+        $stmt->execute([':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
         $resumen = $stmt->fetch(\PDO::FETCH_ASSOC);
 
-        // Ventas por día
+        // Ventas por día (agrupadas en hora local del navegador)
         $stmt = $db->prepare("
-            SELECT DATE(`created_at`) as fecha, COUNT(*) as ordenes, SUM(`monto`) as monto
+            SELECT DATE(DATE_SUB(`created_at`, INTERVAL :tz MINUTE)) as fecha,
+                   COUNT(*) as ordenes, SUM(`monto`) as monto
             FROM `ordenes`
             WHERE `revendedor_id` = :rid
               AND `estado` = 'completed'
-              AND DATE(`created_at`) BETWEEN :desde AND :hasta
-            GROUP BY DATE(`created_at`)
+              AND `created_at` BETWEEN :desde AND :hasta
+            GROUP BY DATE(DATE_SUB(`created_at`, INTERVAL :tz2 MINUTE))
             ORDER BY fecha ASC
         ");
-        $stmt->execute([':rid' => $revId, ':desde' => $desde, ':hasta' => $hasta]);
+        $stmt->execute([':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc,
+                        ':tz' => $tzOffset, ':tz2' => $tzOffset]);
         $porDia = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
         // Top paquetes
@@ -179,12 +196,12 @@ if (str_starts_with($uri, '/reseller/api/')) {
             WHERE `revendedor_id` = :rid
               AND `estado` = 'completed'
               AND `package_id` IS NOT NULL
-              AND DATE(`created_at`) BETWEEN :desde AND :hasta
+              AND `created_at` BETWEEN :desde AND :hasta
             GROUP BY `package_id`
             ORDER BY ordenes DESC
             LIMIT 6
         ");
-        $stmt->execute([':rid' => $revId, ':desde' => $desde, ':hasta' => $hasta]);
+        $stmt->execute([':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
         $topPkgs = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
         // Nombres de paquetes desde XUI
@@ -213,11 +230,11 @@ if (str_starts_with($uri, '/reseller/api/')) {
             FROM `ordenes` o
             LEFT JOIN `clientes` c ON c.`line_id` = o.`line_id`
             WHERE o.`revendedor_id` = :rid
-              AND DATE(o.`created_at`) BETWEEN :desde AND :hasta
+              AND o.`created_at` BETWEEN :desde AND :hasta
             ORDER BY o.`created_at` DESC
             LIMIT 200
         ");
-        $stmt->execute([':rid' => $revId, ':desde' => $desde, ':hasta' => $hasta]);
+        $stmt->execute([':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
         $txs = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
         // Añadir nombre del paquete a cada transacción
@@ -237,6 +254,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
             'transacciones' => $txs,
             'desde'         => $desde,
             'hasta'         => $hasta,
+            'tz_offset'     => $tzOffset,
         ]);
     }
 
@@ -727,13 +745,18 @@ $isAuth = !empty($_SESSION['rev_id']);
   }
 
   // ─── Dashboard Ventas ─────────────────────────────────────────────────────
-  function todayStr(){
-    return new Date().toISOString().slice(0,10);
+  // Use local calendar date (not UTC) so users in UTC-6 see their own day, not server day
+  function localDateStr(d){
+    d = d || new Date();
+    return d.getFullYear() + '-' +
+           String(d.getMonth()+1).padStart(2,'0') + '-' +
+           String(d.getDate()).padStart(2,'0');
   }
+  function todayStr(){ return localDateStr(); }
   function dateOffset(days){
     const d = new Date();
     d.setDate(d.getDate() - days);
-    return d.toISOString().slice(0,10);
+    return localDateStr(d);
   }
   function firstOfMonth(){
     const d = new Date();
@@ -789,7 +812,8 @@ $isAuth = !empty($_SESSION['rev_id']);
     });
 
     try {
-      const res = await api('estadisticas', { desde, hasta });
+      const tzOffset = new Date().getTimezoneOffset(); // minutes behind UTC (positive=west)
+      const res = await api('estadisticas', { desde, hasta, tz_offset: tzOffset });
       const { resumen, por_dia, top_paquetes, transacciones } = res.data;
 
       // Stat cards
@@ -1024,11 +1048,13 @@ $isAuth = !empty($_SESSION['rev_id']);
       document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active-q'));
       btn.classList.add('active-q');
       if(btn.dataset.days){
-        const days = parseInt(btn.dataset.days);
-        setDateRange(dateOffset(days), todayStr());
+        setDateRange(dateOffset(parseInt(btn.dataset.days)), todayStr());
       } else if(btn.dataset.month){
         setDateRange(firstOfMonth(), todayStr());
       }
+      // Auto-aplicar al hacer click en rango rápido
+      ventasCargadas = true;
+      loadEstadisticas();
     });
   });
 
