@@ -304,7 +304,7 @@ class UserController extends BaseController
                 $this->success("No tienes cuentas registradas.", [
                     'total'    => 0,
                     'clientes' => [],
-                    'message'  => "No encontré cuentas IPTV asociadas a tu número. ¿Quieres crear una?",
+                    'message'  => "No encontré cuentas asociadas a tu número. ¿Quieres crear una?",
                 ]);
             }
 
@@ -312,7 +312,7 @@ class UserController extends BaseController
             $numEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
             // Pre-format a ready-to-display message + per-index lookups for the bot
-            $message = "📺 *Tus cuentas IPTV:*\n\n";
+            $message = "📺 *Tus cuentas:*\n\n";
             $clientes = [];
             $indices = [];   // { "1": {username, line_id, ...}, "2": {...} }
 
