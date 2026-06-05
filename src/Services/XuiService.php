@@ -297,7 +297,10 @@ class XuiService
         // Fields this panel resets to defaults when omitted from edit_line. We always pull the
         // current values and only let $data override them so partial edits (e.g. only password)
         // don't wipe unrelated state.
-        $preserveFields = ['username', 'password', 'exp_date', 'max_connections', 'package_id', 'bouquet', 'vod_bouquet', 'series_bouquet', 'member_group_id'];
+        $preserveFields = ['username', 'password', 'exp_date', 'max_connections', 'package_id',
+                           'bouquet', 'vod_bouquet', 'series_bouquet', 'member_group_id',
+                           'allowed_outputs', 'is_mag', 'is_e2', 'is_stalker', 'is_isplock',
+                           'allowed_ips', 'allowed_ua', 'forced_country', 'is_restreamer'];
         $missingAny = false;
         foreach ($preserveFields as $f) {
             if (!isset($data[$f])) {
@@ -363,8 +366,6 @@ class XuiService
         $current     = $this->getLine($lineId);
         $currentData = isset($current['data']) && is_array($current['data']) ? $current['data'] : $current;
 
-        LoggerService::logFile("renewLineAsReseller: current line data keys: " . implode(', ', array_keys($currentData)), "debug");
-
         $params = [
             'id'              => $lineId,
             'package'         => $packageId,
@@ -373,6 +374,15 @@ class XuiService
             'password'        => (string)($currentData['password']        ?? ''),
             'max_connections' => (int)($currentData['max_connections']    ?? 1),
         ];
+
+        // Preserve access/restriction fields so the reseller API edit_line doesn't reset them
+        $preserveExtra = ['allowed_outputs', 'is_mag', 'is_e2', 'is_stalker', 'is_isplock',
+                          'allowed_ips', 'allowed_ua', 'forced_country', 'is_restreamer'];
+        foreach ($preserveExtra as $f) {
+            if (isset($currentData[$f]) && $currentData[$f] !== null && $currentData[$f] !== '') {
+                $params[$f] = $currentData[$f];
+            }
+        }
 
         $this->useResellerAuth($resellerApiKey);
         try {
