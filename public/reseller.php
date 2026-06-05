@@ -995,7 +995,7 @@ $isAuth = !empty($_SESSION['rev_id']);
         ? `<span style="font-size:12px">${esc(tx.pkg_nombre)}</span>`
         : (tx.package_id ? `<span class="tx-paypal">#${tx.package_id}</span>` : '—');
       const ppLink = tx.paypal_order_id
-        ? `<span class="tx-paypal" title="${esc(tx.paypal_order_id)}">${esc(tx.paypal_order_id.slice(0,14))}…</span>`
+        ? `<span class="tx-paypal">${esc(tx.paypal_order_id)}</span>`
         : '<span style="color:var(--muted);font-size:11px">—</span>';
       const user = tx.iptv_user
         ? `<span class="mono" style="font-size:12px">${esc(tx.iptv_user)}</span>`
