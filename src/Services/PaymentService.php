@@ -750,8 +750,8 @@ class PaymentService
             ]],
             'application_context' => [
                 'user_action' => 'PAY_NOW',
-                'return_url'  => $_ENV['PAYPAL_RETURN_URL'] ?? 'https://solucionesdigitales.icu/pago-exitoso',
-                'cancel_url'  => $_ENV['PAYPAL_CANCEL_URL'] ?? 'https://solucionesdigitales.icu/pago-cancelado',
+                'return_url'  => $_ENV['PAYPAL_RETURN_URL'] ?? 'https://titipanel.solucionesdigitales.icu/pago-exitoso',
+                'cancel_url'  => $_ENV['PAYPAL_CANCEL_URL'] ?? 'https://titipanel.solucionesdigitales.icu/pago-cancelado',
             ],
         ];
 
