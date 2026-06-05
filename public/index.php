@@ -58,12 +58,124 @@ try {
     // PayPal redirect landing pages (GET, no auth required)
     if ($requestMethod === 'GET' && $requestUri === '/pago-exitoso') {
         header('Content-Type: text/html; charset=utf-8');
-        echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pago recibido</title><style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0fdf4}div{text-align:center;padding:2rem}h1{color:#16a34a;font-size:2rem;margin-bottom:.5rem}p{color:#374151}</style></head><body><div><h1>✅ ¡Pago recibido!</h1><p>Tu pago fue procesado correctamente.</p><p>Regresa a WhatsApp y escribe <strong>confirmar</strong> para activar tu servicio.</p></div></body></html>';
+        echo <<<'HTML'
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>¡Pago completado!</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f4c2a 0%,#1a7a42 50%,#25a55a 100%);padding:1rem}
+  .card{background:#fff;border-radius:24px;padding:2.5rem 2rem;max-width:400px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+  .icon-wrap{width:80px;height:80px;background:linear-gradient(135deg,#22c55e,#16a34a);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;box-shadow:0 8px 24px rgba(34,197,94,.4)}
+  .icon-wrap svg{width:40px;height:40px;stroke:#fff;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+  .checkmark{stroke-dasharray:60;stroke-dashoffset:60;animation:draw .5s .2s ease forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  h1{font-size:1.6rem;font-weight:700;color:#111827;margin-bottom:.5rem}
+  .subtitle{color:#6b7280;font-size:.95rem;margin-bottom:2rem;line-height:1.5}
+  .steps{background:#f0fdf4;border-radius:16px;padding:1.25rem;margin-bottom:1.75rem;text-align:left}
+  .step{display:flex;align-items:flex-start;gap:.75rem;margin-bottom:.75rem}
+  .step:last-child{margin-bottom:0}
+  .step-num{width:24px;height:24px;border-radius:50%;background:#16a34a;color:#fff;font-size:.75rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+  .step-text{font-size:.875rem;color:#374151;line-height:1.4}
+  .step-text strong{color:#111827}
+  .btn{display:flex;align-items:center;justify-content:center;gap:.6rem;background:#25d366;color:#fff;text-decoration:none;padding:.875rem 1.5rem;border-radius:14px;font-size:1rem;font-weight:600;box-shadow:0 4px 16px rgba(37,211,102,.4);transition:transform .15s,box-shadow .15s}
+  .btn:active{transform:scale(.97)}
+  .btn svg{width:22px;height:22px;fill:#fff;flex-shrink:0}
+  .footer{margin-top:1.5rem;font-size:.8rem;color:#9ca3af}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon-wrap">
+    <svg viewBox="0 0 24 24"><polyline class="checkmark" points="4,12 9,17 20,7"/></svg>
+  </div>
+  <h1>¡Pago completado!</h1>
+  <p class="subtitle">Tu pago fue procesado correctamente por PayPal.</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-text">Regresa a <strong>WhatsApp</strong></div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-text">Escríbeme <strong>cualquier mensaje</strong></div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-text">Verificaré tu pago y <strong>activaré tu servicio</strong> automáticamente ✅</div>
+    </div>
+  </div>
+  <a href="whatsapp://" class="btn">
+    <svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.138.561 4.141 1.535 5.873L.057 23.5l5.734-1.502A11.934 11.934 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 01-4.988-1.362l-.358-.213-3.405.893.908-3.317-.233-.371A9.818 9.818 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>
+    Volver a WhatsApp
+  </a>
+  <p class="footer">¿Problemas? Escríbenos directamente en WhatsApp</p>
+</div>
+</body>
+</html>
+HTML;
         exit;
     }
     if ($requestMethod === 'GET' && $requestUri === '/pago-cancelado') {
         header('Content-Type: text/html; charset=utf-8');
-        echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pago cancelado</title><style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#fef2f2}div{text-align:center;padding:2rem}h1{color:#dc2626;font-size:2rem;margin-bottom:.5rem}p{color:#374151}</style></head><body><div><h1>❌ Pago cancelado</h1><p>El pago fue cancelado o no completado.</p><p>Regresa a WhatsApp si deseas intentarlo de nuevo.</p></div></body></html>';
+        echo <<<'HTML'
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pago cancelado</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#4a0f0f 0%,#7a1a1a 50%,#a52525 100%);padding:1rem}
+  .card{background:#fff;border-radius:24px;padding:2.5rem 2rem;max-width:400px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+  .icon-wrap{width:80px;height:80px;background:linear-gradient(135deg,#f87171,#dc2626);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;box-shadow:0 8px 24px rgba(220,38,38,.4)}
+  .icon-wrap svg{width:36px;height:36px;stroke:#fff;fill:none;stroke-width:3;stroke-linecap:round}
+  h1{font-size:1.6rem;font-weight:700;color:#111827;margin-bottom:.5rem}
+  .subtitle{color:#6b7280;font-size:.95rem;margin-bottom:2rem;line-height:1.5}
+  .info-box{background:#fef2f2;border-radius:16px;padding:1.25rem;margin-bottom:1.75rem;text-align:left}
+  .info-item{display:flex;align-items:flex-start;gap:.75rem;margin-bottom:.625rem}
+  .info-item:last-child{margin-bottom:0}
+  .dot{width:8px;height:8px;border-radius:50%;background:#dc2626;flex-shrink:0;margin-top:5px}
+  .info-text{font-size:.875rem;color:#374151;line-height:1.4}
+  .btn{display:flex;align-items:center;justify-content:center;gap:.6rem;background:#25d366;color:#fff;text-decoration:none;padding:.875rem 1.5rem;border-radius:14px;font-size:1rem;font-weight:600;box-shadow:0 4px 16px rgba(37,211,102,.4)}
+  .btn svg{width:22px;height:22px;fill:#fff;flex-shrink:0}
+  .footer{margin-top:1.5rem;font-size:.8rem;color:#9ca3af}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon-wrap">
+    <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </div>
+  <h1>Pago cancelado</h1>
+  <p class="subtitle">No se realizó ningún cargo. Tu dinero está seguro.</p>
+  <div class="info-box">
+    <div class="info-item">
+      <div class="dot"></div>
+      <div class="info-text">Puedes intentarlo de nuevo cuando quieras</div>
+    </div>
+    <div class="info-item">
+      <div class="dot"></div>
+      <div class="info-text">Vuelve a WhatsApp y elige tu plan</div>
+    </div>
+    <div class="info-item">
+      <div class="dot"></div>
+      <div class="info-text">Si tuviste algún problema, escríbenos y te ayudamos</div>
+    </div>
+  </div>
+  <a href="whatsapp://" class="btn">
+    <svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.138.561 4.141 1.535 5.873L.057 23.5l5.734-1.502A11.934 11.934 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 01-4.988-1.362l-.358-.213-3.405.893.908-3.317-.233-.371A9.818 9.818 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>
+    Volver a WhatsApp
+  </a>
+  <p class="footer">No se realizó ningún cobro</p>
+</div>
+</body>
+</html>
+HTML;
         exit;
     }
 
