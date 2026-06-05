@@ -410,21 +410,19 @@ class PaymentService
             }
 
             if ($resellerApiKey && !empty($order['package_id'])) {
-                // Reseller API: assigns package bouquets + extends exp_date by package duration
+                // Reseller API: assigns package bouquets and deducts credits correctly.
+                // Side-effect: when changing packages, XUI calculates exp_date from today instead
+                // of stacking on the existing expiry. We fix this with a follow-up admin API call.
                 $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
                 LoggerService::logFile("resolveRenewal: renewed line {$lineId} via reseller API (bouquets preserved).", "info");
 
-                // Read back the actual exp_date XUI.ONE set so local DB stays accurate
+                // Fix exp_date: reseller API may have set it to now+duration instead of
+                // existing_expiry+duration. Use admin API to enforce our pre-calculated value.
                 try {
-                    $updatedLine = $this->xuiService->getLine($lineId);
-                    $updatedData = isset($updatedLine['data']) && is_array($updatedLine['data']) ? $updatedLine['data'] : $updatedLine;
-                    $actualExpTs = isset($updatedData['exp_date']) && is_numeric($updatedData['exp_date'])
-                        ? (int)$updatedData['exp_date'] : null;
-                    if ($actualExpTs) {
-                        $newExpirationFormatted = date('Y-m-d H:i:s', $actualExpTs);
-                    }
+                    $this->xuiService->editLineAsAdmin($lineId, ['exp_date' => $newExpirationFormatted]);
+                    LoggerService::logFile("resolveRenewal: corrected exp_date to {$newExpirationFormatted} via admin API.", "info");
                 } catch (\Exception $e) {
-                    LoggerService::logFile("resolveRenewal: could not read back exp_date after reseller renewal: " . $e->getMessage(), "warning");
+                    LoggerService::logFile("resolveRenewal: could not correct exp_date after reseller renewal: " . $e->getMessage(), "warning");
                 }
             } else {
                 // Fallback: admin API (clears bouquets but at least renews the line)
