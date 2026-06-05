@@ -740,7 +740,7 @@ class PaymentService
             'intent' => 'CAPTURE',
             'purchase_units' => [[
                 'custom_id'   => $orderId,
-                'description' => $description ?: "Renovación de Servicio · {$orderId}",
+                'description' => "Renovación de Servicio",
                 'amount'      => [
                     'currency_code' => $currency,
                     'value'         => number_format($amount, 2, '.', ''),

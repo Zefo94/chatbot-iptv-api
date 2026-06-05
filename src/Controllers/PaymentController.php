@@ -163,9 +163,8 @@ class PaymentController extends BaseController
             );
 
             $config      = require dirname(__DIR__, 2) . '/config/payment.php';
-            $currency    = isset($input['currency'])    ? strtoupper(trim($input['currency']))  : ($config['paypal']['currency'] ?? 'EUR');
-            $description = isset($input['description']) ? trim($input['description'])            : '';
-            $paypalData  = $this->paymentService->createPayPalOrder($order['order_id'], $monto, $currency, $description);
+            $currency    = isset($input['currency']) ? strtoupper(trim($input['currency'])) : ($config['paypal']['currency'] ?? 'EUR');
+            $paypalData  = $this->paymentService->createPayPalOrder($order['order_id'], $monto, $currency);
 
             LoggerService::logAction("CREAR_PAGO_PAYPAL", $input, array_merge($order, $paypalData));
 
