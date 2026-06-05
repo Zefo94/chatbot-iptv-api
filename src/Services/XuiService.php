@@ -320,8 +320,9 @@ class XuiService
                             if ($f === 'exp_date' && is_numeric($value)) {
                                 $value = date('Y-m-d H:i:s', (int)$value);
                             }
-                            // Never preserve empty bouquet arrays — sending [] actively clears all streams
-                            if (in_array($f, ['bouquet', 'vod_bouquet', 'series_bouquet'], true)) {
+                            // Never preserve empty arrays — sending [] writes literal [] into the field
+                            if (in_array($f, ['bouquet', 'vod_bouquet', 'series_bouquet',
+                                              'allowed_ips', 'allowed_ua'], true)) {
                                 if ($value === '[]' || $value === [] || $value === '' || $value === '0') continue;
                             }
                             $data[$f] = $value;
@@ -379,9 +380,13 @@ class XuiService
         $preserveExtra = ['allowed_outputs', 'is_mag', 'is_e2', 'is_stalker', 'is_isplock',
                           'allowed_ips', 'allowed_ua', 'forced_country', 'is_restreamer'];
         foreach ($preserveExtra as $f) {
-            if (isset($currentData[$f]) && $currentData[$f] !== null && $currentData[$f] !== '') {
-                $params[$f] = $currentData[$f];
+            $v = $currentData[$f] ?? null;
+            // Skip nulls, empty strings, and empty arrays/JSON-arrays ("[]") — sending those
+            // causes XUI.ONE to write literal [] into the field instead of leaving it blank.
+            if ($v === null || $v === '' || $v === [] || $v === '[]') {
+                continue;
             }
+            $params[$f] = $v;
         }
 
         $this->useResellerAuth($resellerApiKey);
