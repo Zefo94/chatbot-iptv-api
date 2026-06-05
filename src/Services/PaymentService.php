@@ -411,19 +411,12 @@ class PaymentService
 
             if ($resellerApiKey && !empty($order['package_id'])) {
                 // Reseller API: assigns package bouquets and deducts credits correctly.
-                // Side-effect: when changing packages, XUI calculates exp_date from today instead
-                // of stacking on the existing expiry. We fix this with a follow-up admin API call.
+                // NOTE: When changing packages, XUI calculates exp_date from today instead of
+                // stacking on the existing expiry. The admin API can fix exp_date but it always
+                // resets bouquets to [] (confirmed via direct API tests), so we skip that correction
+                // to preserve bouquet access. Same-package renewals stack correctly without any fix.
                 $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
                 LoggerService::logFile("resolveRenewal: renewed line {$lineId} via reseller API (bouquets preserved).", "info");
-
-                // Fix exp_date: reseller API may have set it to now+duration instead of
-                // existing_expiry+duration. Use admin API to enforce our pre-calculated value.
-                try {
-                    $this->xuiService->editLineAsAdmin($lineId, ['exp_date' => $newExpirationFormatted]);
-                    LoggerService::logFile("resolveRenewal: corrected exp_date to {$newExpirationFormatted} via admin API.", "info");
-                } catch (\Exception $e) {
-                    LoggerService::logFile("resolveRenewal: could not correct exp_date after reseller renewal: " . $e->getMessage(), "warning");
-                }
             } else {
                 // Fallback: admin API (clears bouquets but at least renews the line)
                 LoggerService::logFile("resolveRenewal: falling back to admin API for line {$lineId} (no reseller key or no package_id).", "warning");
