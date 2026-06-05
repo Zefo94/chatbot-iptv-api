@@ -363,6 +363,8 @@ class XuiService
         $current     = $this->getLine($lineId);
         $currentData = isset($current['data']) && is_array($current['data']) ? $current['data'] : $current;
 
+        LoggerService::logFile("renewLineAsReseller: current line data keys: " . implode(', ', array_keys($currentData)), "debug");
+
         $params = [
             'id'              => $lineId,
             'package'         => $packageId,
