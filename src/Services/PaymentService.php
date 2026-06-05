@@ -299,7 +299,11 @@ class PaymentService
         }
 
         if (empty($orderId)) {
-            throw new Exception("No se pudo extraer la referencia de la orden desde el webhook de {$gateway}.");
+            // Unhandled event type (e.g. CHECKOUT.ORDER.APPROVED, CHECKOUT.ORDER.SAVED, etc.).
+            // Always return 200 so the payment provider stops retrying — we simply don't act on it.
+            $eventLabel = $payload['event_type'] ?? $payload['type'] ?? 'unknown';
+            LoggerService::logFile("Webhook {$gateway}: unhandled event '{$eventLabel}' — acknowledged without action.", "info");
+            return ['success' => true, 'gateway' => $gateway, 'status' => 'ignored', 'event_type' => $eventLabel];
         }
 
         // Action auto-resolver if status is approved
