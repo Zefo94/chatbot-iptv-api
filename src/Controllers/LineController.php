@@ -302,12 +302,12 @@ class LineController extends BaseController
                 LoggerService::logFile("renovar: reseller API applied pkg={$packageId} + bouquets for line {$lineId}.", "info");
 
                 if (!$isSamePkg) {
-                    // Step 2 (cross-package only): fix exp_date without touching package_id/bouquets.
+                    // Step 2 (cross-package only): patch ONLY exp_date, minimal payload, nothing else touched.
                     try {
-                        $this->xuiService->editLineAsAdmin($lineId, ['exp_date' => $newExpirationFormatted]);
-                        LoggerService::logFile("renovar: cross-package exp_date fixed to {$newExpirationFormatted}.", "info");
+                        $this->xuiService->patchExpDateAsAdmin($lineId, $newExpirationFormatted);
+                        LoggerService::logFile("renovar: cross-package exp_date patched to {$newExpirationFormatted}.", "info");
                     } catch (\Exception $e) {
-                        LoggerService::logFile("renovar: cross-package exp_date fix failed: " . $e->getMessage(), "warning");
+                        LoggerService::logFile("renovar: cross-package exp_date patch failed: " . $e->getMessage(), "warning");
                     }
                 }
             } else {

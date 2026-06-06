@@ -353,6 +353,31 @@ class XuiService
     }
 
     /**
+     * Update ONLY the expiration date of a line via admin API, with the absolute minimum payload.
+     * Only sends id + exp_date + username + password — nothing else — so the panel does not
+     * reset any other field (bouquets, is_stalker, is_isplock, allowed_outputs, etc.).
+     * Use this when you need to correct exp_date after a reseller API call without touching anything else.
+     */
+    public function patchExpDateAsAdmin(int $lineId, string $expDate): array
+    {
+        $current = $this->getLine($lineId);
+        $data    = isset($current['data']) && is_array($current['data']) ? $current['data'] : $current;
+
+        $saved = $this->authOverride;
+        $this->authOverride = null;
+        try {
+            return $this->request('edit_line', [
+                'id'       => $lineId,
+                'exp_date' => $expDate,
+                'username' => (string)($data['username'] ?? ''),
+                'password' => (string)($data['password'] ?? ''),
+            ]);
+        } finally {
+            $this->authOverride = $saved;
+        }
+    }
+
+    /**
      * Renew a line using the reseller's own API key.
      *
      * The reseller API edit_line:
