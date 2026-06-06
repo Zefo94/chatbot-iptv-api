@@ -302,13 +302,17 @@ class LineController extends BaseController
                 LoggerService::logFile("renovar: reseller API applied pkg={$packageId} + bouquets for line {$lineId}.", "info");
 
                 if (!$isSamePkg) {
-                    // Step 2 (cross-package only): patch ONLY exp_date, minimal payload, nothing else touched.
+                    // Cross-package two-step: admin sets new package + base exp_date,
+                    // then reseller API (now same-package) applies bouquets + stacks date.
+                    $baseFormatted = date('Y-m-d H:i:s', $baseTimestamp);
                     try {
-                        $this->xuiService->patchExpDateAsAdmin($lineId, $newExpirationFormatted);
-                        LoggerService::logFile("renovar: cross-package exp_date patched to {$newExpirationFormatted}.", "info");
+                        $this->xuiService->setPackageAndBaseExpAsAdmin($lineId, $packageId, $baseFormatted);
+                        LoggerService::logFile("renovar: cross-package step 1 — admin set pkg={$packageId} exp_date={$baseFormatted}.", "info");
                     } catch (\Exception $e) {
-                        LoggerService::logFile("renovar: cross-package exp_date patch failed: " . $e->getMessage(), "warning");
+                        LoggerService::logFile("renovar: cross-package step 1 failed: " . $e->getMessage(), "warning");
                     }
+                    $this->xuiService->renewLineAsReseller($lineId, $packageId, $resellerApiKey);
+                    LoggerService::logFile("renovar: cross-package step 2 — reseller API bouquets + date stacked from {$baseFormatted}.", "info");
                 }
             } else {
                 // No reseller key: admin API only.

@@ -358,33 +358,29 @@ class XuiService
      * reset any other field (bouquets, is_stalker, is_isplock, allowed_outputs, etc.).
      * Use this when you need to correct exp_date after a reseller API call without touching anything else.
      */
-    public function patchExpDateAsAdmin(int $lineId, string $expDate): array
+    /**
+     * Cross-package step 1: set new package_id + exp_date = baseExpDate via admin API.
+     * Bouquets will be reset by the panel (expected — step 2 reseller API will restore them).
+     * Minimal payload (id + package_id + exp_date + username + password) to avoid touching
+     * other line settings.
+     * After this call the line has the new package_id, so the following renewLineAsReseller
+     * is treated as a same-package renewal and stacks exp_date from baseExpDate correctly.
+     */
+    public function setPackageAndBaseExpAsAdmin(int $lineId, int $packageId, string $baseExpDate): array
     {
         $current = $this->getLine($lineId);
         $data    = isset($current['data']) && is_array($current['data']) ? $current['data'] : $current;
 
-        // Minimum required to avoid credential reset
-        $payload = [
-            'id'       => $lineId,
-            'exp_date' => $expDate,
-            'username' => (string)($data['username'] ?? ''),
-            'password' => (string)($data['password'] ?? ''),
-        ];
-
-        // Admin API resets bouquets/outputs to [] when they are absent from the payload.
-        // Include them (as returned by getLine, already in the correct string format) so
-        // the values set by the preceding reseller API call are not wiped.
-        foreach (['bouquet', 'vod_bouquet', 'series_bouquet', 'allowed_outputs'] as $f) {
-            $v = $data[$f] ?? null;
-            if ($v !== null && $v !== '' && $v !== [] && $v !== '[]') {
-                $payload[$f] = $v;
-            }
-        }
-
         $saved = $this->authOverride;
         $this->authOverride = null;
         try {
-            return $this->request('edit_line', $payload);
+            return $this->request('edit_line', [
+                'id'         => $lineId,
+                'package_id' => $packageId,
+                'exp_date'   => $baseExpDate,
+                'username'   => (string)($data['username'] ?? ''),
+                'password'   => (string)($data['password'] ?? ''),
+            ]);
         } finally {
             $this->authOverride = $saved;
         }

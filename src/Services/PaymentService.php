@@ -452,19 +452,23 @@ class PaymentService
                 $usedResellerApi = true;
                 LoggerService::logFile("resolveRenewal: line {$lineId} renewed via reseller API (same-package).", "info");
             } elseif ($resellerApiKey && !empty($order['package_id'])) {
-                // Cross-package: two-step to get both correct bouquets AND correct exp_date.
-                // Step 1: reseller API assigns new package + its bouquets (credits auto-deducted here).
+                // Cross-package two-step strategy:
+                // Step 1: admin API sets new package_id + exp_date = base (current expiry).
+                //         Bouquets reset by panel — expected.
+                //         After this, the line already has the new package_id.
+                // Step 2: reseller API same-package renewal (package already matches) →
+                //         stacks exp_date from base → final = base + package_duration ✅
+                //         + applies package bouquets correctly ✅
+                $baseFormatted = date('Y-m-d H:i:s', $baseTimestamp);
+                try {
+                    $this->xuiService->setPackageAndBaseExpAsAdmin($lineId, (int)$order['package_id'], $baseFormatted);
+                    LoggerService::logFile("resolveRenewal: cross-package step 1 — admin set pkg={$order['package_id']} exp_date={$baseFormatted}.", "info");
+                } catch (\Exception $e) {
+                    LoggerService::logFile("resolveRenewal: cross-package step 1 failed: " . $e->getMessage(), "warning");
+                }
                 $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
                 $usedResellerApi = true;
-                LoggerService::logFile("resolveRenewal: cross-package step 1 — reseller API applied pkg={$order['package_id']} + bouquets for line {$lineId}.", "info");
-                // Step 2: patch ONLY exp_date via admin API (minimal payload: id+exp_date+username+password).
-                // Does NOT send bouquets or any other field → nothing gets reset.
-                try {
-                    $this->xuiService->patchExpDateAsAdmin($lineId, $newExpirationFormatted);
-                    LoggerService::logFile("resolveRenewal: cross-package step 2 — patched exp_date to {$newExpirationFormatted}.", "info");
-                } catch (\Exception $e) {
-                    LoggerService::logFile("resolveRenewal: cross-package step 2 failed (exp_date patch): " . $e->getMessage(), "warning");
-                }
+                LoggerService::logFile("resolveRenewal: cross-package step 2 — reseller API applied bouquets + stacked date from {$baseFormatted}.", "info");
             } else {
                 // No reseller key: admin API only (bouquets affected if package changes, but no alternative).
                 LoggerService::logFile("resolveRenewal: admin API fallback for line {$lineId} (no reseller key).", "warning");
