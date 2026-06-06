@@ -363,15 +363,28 @@ class XuiService
         $current = $this->getLine($lineId);
         $data    = isset($current['data']) && is_array($current['data']) ? $current['data'] : $current;
 
+        // Minimum required to avoid credential reset
+        $payload = [
+            'id'       => $lineId,
+            'exp_date' => $expDate,
+            'username' => (string)($data['username'] ?? ''),
+            'password' => (string)($data['password'] ?? ''),
+        ];
+
+        // Admin API resets bouquets/outputs to [] when they are absent from the payload.
+        // Include them (as returned by getLine, already in the correct string format) so
+        // the values set by the preceding reseller API call are not wiped.
+        foreach (['bouquet', 'vod_bouquet', 'series_bouquet', 'allowed_outputs'] as $f) {
+            $v = $data[$f] ?? null;
+            if ($v !== null && $v !== '' && $v !== [] && $v !== '[]') {
+                $payload[$f] = $v;
+            }
+        }
+
         $saved = $this->authOverride;
         $this->authOverride = null;
         try {
-            return $this->request('edit_line', [
-                'id'       => $lineId,
-                'exp_date' => $expDate,
-                'username' => (string)($data['username'] ?? ''),
-                'password' => (string)($data['password'] ?? ''),
-            ]);
+            return $this->request('edit_line', $payload);
         } finally {
             $this->authOverride = $saved;
         }
