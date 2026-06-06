@@ -348,11 +348,7 @@ class UserController extends BaseController
                 $indices[(string)$idx] = $client;
             }
 
-            if ($total > 1) {
-                $message .= "Responde con el *número* (1 a {$total}) para gestionar esa cuenta.";
-            } else {
-                $message .= "Continúa para gestionar tu cuenta.";
-            }
+            $message .= "Escribe el *número* de la cuenta que deseas gestionar.";
 
             LoggerService::logAction("LISTAR_MIS_LINEAS", $input, ['total' => $total]);
 
