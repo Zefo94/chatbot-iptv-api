@@ -430,7 +430,11 @@ class PaymentService
             // Detect same-package vs cross-package renewal.
             // XUI reseller API stacks exp_date correctly only for same-package renewals.
             // For cross-package it uses today as base, producing wrong exp_date.
-            // Admin API sets exp_date precisely but resets bouquets to [].
+            // Admin API sets exp_date precisely but resets bouquets to [] when package_id changes.
+            //
+            // Cross-package strategy (two-step):
+            //   1. Reseller API → applies new package + correct bouquets (exp_date wrong: today-based)
+            //   2. Admin API (exp_date only, no package_id) → fixes exp_date without touching bouquets
             $usedResellerApi   = false;
             $currentPkgId      = null;
             if ($resellerApiKey && !empty($order['package_id'])) {
@@ -443,18 +447,26 @@ class PaymentService
             $isSamePackage = $currentPkgId !== null && $currentPkgId === (int)($order['package_id'] ?? 0);
 
             if ($resellerApiKey && !empty($order['package_id']) && $isSamePackage) {
-                // Same-package renewal: reseller API stacks exp_date from current expiry correctly.
+                // Same-package: reseller API stacks exp_date from current expiry and preserves bouquets.
                 $xuiUpdate     = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
                 $usedResellerApi = true;
-                LoggerService::logFile("resolveRenewal: line {$lineId} renewed via reseller API (same-package, exp_date stacked correctly).", "info");
-            } else {
-                // Cross-package or no reseller key: admin API with computeExpiry date (exp_date is exact).
-                // Admin API resets explicit bouquets but package_id-based content access is preserved.
-                if ($resellerApiKey && !empty($order['package_id'])) {
-                    LoggerService::logFile("resolveRenewal: cross-package renewal (cur={$currentPkgId}→new={$order['package_id']}), using admin API for correct exp_date.", "info");
-                } else {
-                    LoggerService::logFile("resolveRenewal: admin API fallback for line {$lineId} (no reseller key or no package_id).", "warning");
+                LoggerService::logFile("resolveRenewal: line {$lineId} renewed via reseller API (same-package).", "info");
+            } elseif ($resellerApiKey && !empty($order['package_id'])) {
+                // Cross-package: two-step to get both correct bouquets AND correct exp_date.
+                // Step 1: reseller API assigns new package + its bouquets (credits auto-deducted here).
+                $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
+                $usedResellerApi = true;
+                LoggerService::logFile("resolveRenewal: cross-package step 1 — reseller API applied pkg={$order['package_id']} + bouquets for line {$lineId}.", "info");
+                // Step 2: admin API fixes exp_date only (no package_id → no bouquet reset).
+                try {
+                    $this->xuiService->editLineAsAdmin($lineId, ['exp_date' => $newExpirationFormatted]);
+                    LoggerService::logFile("resolveRenewal: cross-package step 2 — admin API fixed exp_date to {$newExpirationFormatted}.", "info");
+                } catch (\Exception $e) {
+                    LoggerService::logFile("resolveRenewal: cross-package step 2 failed (exp_date fix): " . $e->getMessage(), "warning");
                 }
+            } else {
+                // No reseller key: admin API only (bouquets affected if package changes, but no alternative).
+                LoggerService::logFile("resolveRenewal: admin API fallback for line {$lineId} (no reseller key).", "warning");
                 $editPayload = ['exp_date' => $newExpirationFormatted];
                 if (!empty($order['package_id'])) {
                     $editPayload['package_id'] = (int)$order['package_id'];

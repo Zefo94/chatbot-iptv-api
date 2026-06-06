@@ -278,13 +278,46 @@ class LineController extends BaseController
                 }
             }
 
-            // 4. Update expiry via admin API — the reseller API silently ignores exp_date
-            //    in edit_line and returns STATUS_SUCCESS without actually changing the date.
-            $editPayload = ['exp_date' => $newExpirationFormatted];
-            if ($packageId !== null) {
-                $editPayload['package_id'] = $packageId;
+            // 4. Update expiry in XUI.
+            // Strategy: reseller API assigns the new package + correct bouquets; admin API then
+            // fixes exp_date to the calendar-accurate value without resetting bouquets.
+            // Same-package: reseller API stacks exp_date correctly → no admin fix needed.
+            // Cross-package: two steps (reseller → admin exp_date only).
+            // No reseller key: admin API only (bouquets may reset if package changes).
+            $resellerApiKey = $reseller['xui_api_key'] ?? null;
+
+            if ($resellerApiKey && $packageId !== null) {
+                // Detect same vs cross-package to decide whether exp_date fix is needed.
+                $currentPkgId = null;
+                try {
+                    $lineNow = $this->xuiService->getLine($lineId);
+                    $lineNowData = isset($lineNow['data']) && is_array($lineNow['data']) ? $lineNow['data'] : $lineNow;
+                    $currentPkgId = !empty($lineNowData['package_id']) ? (int)$lineNowData['package_id'] : null;
+                } catch (\Exception $e) { /* fall through */ }
+
+                $isSamePkg = $currentPkgId !== null && $currentPkgId === $packageId;
+
+                // Step 1: reseller API → assigns package + bouquets (and stacks exp_date for same-package).
+                $this->xuiService->renewLineAsReseller($lineId, $packageId, $resellerApiKey);
+                LoggerService::logFile("renovar: reseller API applied pkg={$packageId} + bouquets for line {$lineId}.", "info");
+
+                if (!$isSamePkg) {
+                    // Step 2 (cross-package only): fix exp_date without touching package_id/bouquets.
+                    try {
+                        $this->xuiService->editLineAsAdmin($lineId, ['exp_date' => $newExpirationFormatted]);
+                        LoggerService::logFile("renovar: cross-package exp_date fixed to {$newExpirationFormatted}.", "info");
+                    } catch (\Exception $e) {
+                        LoggerService::logFile("renovar: cross-package exp_date fix failed: " . $e->getMessage(), "warning");
+                    }
+                }
+            } else {
+                // No reseller key: admin API only.
+                $editPayload = ['exp_date' => $newExpirationFormatted];
+                if ($packageId !== null) {
+                    $editPayload['package_id'] = $packageId;
+                }
+                $this->xuiService->editLineAsAdmin($lineId, $editPayload);
             }
-            $this->xuiService->editLineAsAdmin($lineId, $editPayload);
 
             // 5. Ensure line is activated
             $this->xuiService->requestAsAdmin('enable_line', ['id' => $lineId]);
