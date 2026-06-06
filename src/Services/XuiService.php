@@ -382,15 +382,21 @@ class XuiService
         try {
             $pkgResp = $this->requestAsAdmin('get_package', ['id' => $packageId]);
             $pkgData = isset($pkgResp['data']) && is_array($pkgResp['data']) ? $pkgResp['data'] : $pkgResp;
+            LoggerService::logFile("renewLineAsReseller: get_package({$packageId}) raw keys: " . implode(', ', array_keys(is_array($pkgData) ? $pkgData : [])), "debug");
+            LoggerService::logFile("renewLineAsReseller: get_package({$packageId}) full: " . json_encode($pkgData), "debug");
             foreach (['bouquet', 'vod_bouquet', 'series_bouquet'] as $bf) {
                 $v = $pkgData[$bf] ?? null;
                 if ($v !== null && $v !== '' && $v !== [] && $v !== '[]') {
                     $params[$bf] = $v;
+                    LoggerService::logFile("renewLineAsReseller: applying pkg bouquet {$bf}=" . json_encode($v), "debug");
+                } else {
+                    LoggerService::logFile("renewLineAsReseller: pkg bouquet {$bf} is empty/missing (value=" . json_encode($v) . ")", "debug");
                 }
             }
         } catch (Exception $e) {
             LoggerService::logFile("renewLineAsReseller: could not fetch package bouquets for pkg {$packageId}: " . $e->getMessage(), "warning");
         }
+        LoggerService::logFile("renewLineAsReseller: final payload keys for line {$lineId}: " . implode(', ', array_keys($params)), "debug");
 
         // Preserve access/restriction fields so the reseller API edit_line doesn't reset them
         $preserveExtra = ['allowed_outputs', 'is_mag', 'is_e2', 'is_stalker', 'is_isplock',
