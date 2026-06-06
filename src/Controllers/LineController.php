@@ -550,6 +550,7 @@ class LineController extends BaseController
     private function computeExpiry(int $baseTs, int $fallbackDays, ?int $packageId): string
     {
         if ($packageId) {
+            // 1. Try local precios_paquetes cache
             try {
                 $db   = Connection::getInstance();
                 $stmt = $db->prepare("SELECT duracion, duracion_unidad FROM precios_paquetes WHERE package_id = :pid LIMIT 1");
@@ -567,7 +568,25 @@ class LineController extends BaseController
                     }
                 }
             } catch (Exception $e) {
-                LoggerService::logFile("computeExpiry: package lookup failed, using days fallback: " . $e->getMessage(), "warning");
+                LoggerService::logFile("computeExpiry: local lookup failed: " . $e->getMessage(), "warning");
+            }
+
+            // 2. Fallback: ask XUI directly (covers packages not yet synced or with unrecognized unit)
+            try {
+                $resp = $this->xuiService->requestAsAdmin('get_package', ['id' => $packageId]);
+                $pkg  = isset($resp['data']) && is_array($resp['data']) ? $resp['data'] : $resp;
+                $dur  = (int)($pkg['official_duration'] ?? 0);
+                $unit = strtolower(trim((string)($pkg['official_duration_in'] ?? '')));
+                if ($dur > 0 && in_array($unit, ['month', 'months', 'year', 'years'])) {
+                    $modifier = in_array($unit, ['year', 'years']) ? "+{$dur} years" : "+{$dur} months";
+                    $dt = new \DateTime();
+                    $dt->setTimestamp($baseTs);
+                    $dt->modify($modifier);
+                    LoggerService::logFile("computeExpiry: resolved via XUI API for package {$packageId}: {$dur} {$unit}", "info");
+                    return $dt->format('Y-m-d H:i:s');
+                }
+            } catch (Exception $e) {
+                LoggerService::logFile("computeExpiry: XUI lookup failed for package {$packageId}: " . $e->getMessage(), "warning");
             }
         }
         return date('Y-m-d H:i:s', $baseTs + $fallbackDays * 86400);
