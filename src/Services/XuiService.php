@@ -376,6 +376,22 @@ class XuiService
             'max_connections' => (int)($currentData['max_connections']    ?? 1),
         ];
 
+        // Fetch package bouquets from XUI and include them explicitly.
+        // XUI does NOT automatically apply a package's bouquets when package_id changes via edit_line;
+        // they must be sent in the payload.
+        try {
+            $pkgResp = $this->requestAsAdmin('get_package', ['id' => $packageId]);
+            $pkgData = isset($pkgResp['data']) && is_array($pkgResp['data']) ? $pkgResp['data'] : $pkgResp;
+            foreach (['bouquet', 'vod_bouquet', 'series_bouquet'] as $bf) {
+                $v = $pkgData[$bf] ?? null;
+                if ($v !== null && $v !== '' && $v !== [] && $v !== '[]') {
+                    $params[$bf] = $v;
+                }
+            }
+        } catch (Exception $e) {
+            LoggerService::logFile("renewLineAsReseller: could not fetch package bouquets for pkg {$packageId}: " . $e->getMessage(), "warning");
+        }
+
         // Preserve access/restriction fields so the reseller API edit_line doesn't reset them
         $preserveExtra = ['allowed_outputs', 'is_mag', 'is_e2', 'is_stalker', 'is_isplock',
                           'allowed_ips', 'allowed_ua', 'forced_country', 'is_restreamer'];
