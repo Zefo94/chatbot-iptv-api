@@ -416,12 +416,6 @@ class XuiService
                 LoggerService::logFile("renewLineAsReseller: applying pkg bouquets for line {$lineId}: {$bouquetsRaw}", "info");
             }
 
-            // output_formats in get_package → allowed_outputs in edit_line; same JSON string format.
-            $outputFormats = $pkgData['output_formats'] ?? null;
-            if ($outputFormats !== null && $outputFormats !== '' && $outputFormats !== '[]') {
-                $params['allowed_outputs'] = $outputFormats;
-            }
-
             // vod/series bouquets if the panel exposes them (keep as JSON strings)
             foreach (['vod_bouquets' => 'vod_bouquet', 'series_bouquets' => 'series_bouquet'] as $pkgField => $lineField) {
                 $v = $pkgData[$pkgField] ?? null;
@@ -433,8 +427,13 @@ class XuiService
             LoggerService::logFile("renewLineAsReseller: could not fetch package bouquets for pkg {$packageId}: " . $e->getMessage(), "warning");
         }
 
-        // Do NOT send is_stalker, is_isplock, is_mag, is_e2, is_restreamer etc.
-        // Those are defined by the package; sending 0 would override the package's own defaults.
+        // Preserve allowed_outputs from the current line (format as returned by getLine — JSON string).
+        // Do NOT send is_stalker, is_isplock, is_mag, is_e2, is_restreamer: those are package-defined
+        // and sending 0 would override the package's own defaults.
+        $v = $currentData['allowed_outputs'] ?? null;
+        if ($v !== null && $v !== '' && $v !== [] && $v !== '[]') {
+            $params['allowed_outputs'] = $v;
+        }
 
         $this->useResellerAuth($resellerApiKey);
         try {
