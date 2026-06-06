@@ -109,12 +109,20 @@ class PaymentService
             $order = $this->tryCapturePayPal($db, $order);
         }
 
-        // Enrich completed orders with the client's current expiry date
+        // Enrich completed orders with the client's current expiry date and reseller credit balance
         if ($order['estado'] === 'completed') {
             $expStmt = $db->prepare("SELECT `fecha_vencimiento` FROM `clientes` WHERE `line_id` = :lid LIMIT 1");
             $expStmt->execute([':lid' => $order['line_id']]);
             $clientRow = $expStmt->fetch();
             $order['fecha_vencimiento'] = $clientRow['fecha_vencimiento'] ?? null;
+
+            if (!empty($order['revendedor_id'])) {
+                $credStmt = $db->prepare("SELECT `creditos_cache`, `nombre` FROM `revendedores` WHERE `xui_user_id` = :xid LIMIT 1");
+                $credStmt->execute([':xid' => (int)$order['revendedor_id']]);
+                $resellerRow = $credStmt->fetch();
+                $order['creditos_restantes'] = $resellerRow ? (int)$resellerRow['creditos_cache'] : null;
+                $order['revendedor_nombre']  = $resellerRow ? $resellerRow['nombre'] : null;
+            }
         }
 
         return $order;
