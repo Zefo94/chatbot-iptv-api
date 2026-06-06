@@ -203,15 +203,24 @@ class UserController extends BaseController
                 $sql .= " AND c.`revendedor_id` = :rid";
                 $params[':rid'] = $resellerLocalId;
             }
-            $sql .= " ORDER BY c.`created_at` ASC LIMIT 1 OFFSET :offset";
+            $sql .= " ORDER BY c.`created_at` ASC";
 
             $stmt = $db->prepare($sql);
             foreach ($params as $k => $v) {
                 $stmt->bindValue($k, $v, \PDO::PARAM_STR);
             }
-            $stmt->bindValue(':offset', $indice - 1, \PDO::PARAM_INT);
             $stmt->execute();
-            $row = $stmt->fetch();
+            $rows = $stmt->fetchAll();
+
+            // Aplicar el mismo filtro XUI que listar-mis-lineas para que los índices coincidan
+            if ($resellerLocalId !== null && isset($reseller) && !empty($rows)) {
+                $xuiSet = $this->fetchResellerUsernamesFromXui($reseller);
+                if ($xuiSet !== null) {
+                    $rows = array_values(array_filter($rows, fn($r) => isset($xuiSet[strtolower($r['username'])])));
+                }
+            }
+
+            $row = $rows[$indice - 1] ?? null;
 
             if (!$row) {
                 $this->error("Número {$indice} no es válido. Por favor elige un número de la lista.", 404);
