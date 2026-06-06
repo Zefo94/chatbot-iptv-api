@@ -427,17 +427,34 @@ class PaymentService
                 }
             }
 
+            // Detect same-package vs cross-package renewal.
+            // XUI reseller API stacks exp_date correctly only for same-package renewals.
+            // For cross-package it uses today as base, producing wrong exp_date.
+            // Admin API sets exp_date precisely but resets bouquets to [].
+            $usedResellerApi   = false;
+            $currentPkgId      = null;
             if ($resellerApiKey && !empty($order['package_id'])) {
-                // Reseller API: assigns package bouquets and deducts credits correctly.
-                // NOTE: When changing packages, XUI calculates exp_date from today instead of
-                // stacking on the existing expiry. The admin API can fix exp_date but it always
-                // resets bouquets to [] (confirmed via direct API tests), so we skip that correction
-                // to preserve bouquet access. Same-package renewals stack correctly without any fix.
-                $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
-                LoggerService::logFile("resolveRenewal: renewed line {$lineId} via reseller API (bouquets preserved).", "info");
+                try {
+                    $lineInfo    = $this->xuiService->getLine($lineId);
+                    $lineData    = isset($lineInfo['data']) && is_array($lineInfo['data']) ? $lineInfo['data'] : $lineInfo;
+                    $currentPkgId = !empty($lineData['package_id']) ? (int)$lineData['package_id'] : null;
+                } catch (\Exception $e) { /* ignore — will fall back to admin API */ }
+            }
+            $isSamePackage = $currentPkgId !== null && $currentPkgId === (int)($order['package_id'] ?? 0);
+
+            if ($resellerApiKey && !empty($order['package_id']) && $isSamePackage) {
+                // Same-package renewal: reseller API stacks exp_date from current expiry correctly.
+                $xuiUpdate     = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
+                $usedResellerApi = true;
+                LoggerService::logFile("resolveRenewal: line {$lineId} renewed via reseller API (same-package, exp_date stacked correctly).", "info");
             } else {
-                // Fallback: admin API (clears bouquets but at least renews the line)
-                LoggerService::logFile("resolveRenewal: falling back to admin API for line {$lineId} (no reseller key or no package_id).", "warning");
+                // Cross-package or no reseller key: admin API with computeExpiry date (exp_date is exact).
+                // Admin API resets explicit bouquets but package_id-based content access is preserved.
+                if ($resellerApiKey && !empty($order['package_id'])) {
+                    LoggerService::logFile("resolveRenewal: cross-package renewal (cur={$currentPkgId}→new={$order['package_id']}), using admin API for correct exp_date.", "info");
+                } else {
+                    LoggerService::logFile("resolveRenewal: admin API fallback for line {$lineId} (no reseller key or no package_id).", "warning");
+                }
                 $editPayload = ['exp_date' => $newExpirationFormatted];
                 if (!empty($order['package_id'])) {
                     $editPayload['package_id'] = (int)$order['package_id'];
@@ -445,15 +462,14 @@ class PaymentService
                 $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
             }
 
-            // Reseller API edit_line (with package param) auto-deducts credits in XUI.ONE.
-            // Only run manual deduction when the admin API fallback was used (reseller API was unavailable).
-            if (!$resellerApiKey && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
+            // Credits: reseller API auto-deducts; admin API (including cross-package path) needs manual deduction.
+            if (!$usedResellerApi && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
                 try {
                     $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
                 } catch (Exception $creditEx) {
                     LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']}: " . $creditEx->getMessage(), "warning");
                 }
-            } elseif ($resellerApiKey && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
+            } elseif ($usedResellerApi && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
                 // Credits were auto-deducted by XUI.ONE reseller API — just sync the local cache
                 try {
                     $userInfo = $this->xuiService->requestAsAdmin('get_user', ['id' => (int)$order['revendedor_id']]);
