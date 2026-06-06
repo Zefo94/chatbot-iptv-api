@@ -117,10 +117,11 @@ class PaymentService
             $order['fecha_vencimiento'] = $clientRow['fecha_vencimiento'] ?? null;
 
             if (!empty($order['revendedor_id'])) {
-                $credStmt = $db->prepare("SELECT `creditos_cache`, `nombre` FROM `revendedores` WHERE `xui_user_id` = :xid LIMIT 1");
+                // revendedor_id may be either the local `id` or the `xui_user_id` depending on the flow config
+                $credStmt = $db->prepare("SELECT `creditos_cache`, `nombre` FROM `revendedores` WHERE `xui_user_id` = :xid OR `id` = :xid LIMIT 1");
                 $credStmt->execute([':xid' => (int)$order['revendedor_id']]);
                 $resellerRow = $credStmt->fetch();
-                $order['creditos_restantes'] = $resellerRow ? (int)$resellerRow['creditos_cache'] : null;
+                $order['creditos_restantes'] = $resellerRow !== false ? (int)$resellerRow['creditos_cache'] : null;
                 $order['revendedor_nombre']  = $resellerRow ? $resellerRow['nombre'] : null;
             }
         }
