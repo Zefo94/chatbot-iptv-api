@@ -401,50 +401,40 @@ class XuiService
             'max_connections' => (int)($currentData['max_connections']    ?? 1),
         ];
 
-        // Fetch package bouquets from XUI and include them explicitly.
-        // XUI does NOT automatically apply a package's bouquets when package_id changes via edit_line;
-        // they must be sent in the payload.
-        // get_package returns 'bouquets' (plural, JSON-encoded array) → maps to 'bouquet' in edit_line.
+        // Fetch package bouquets and output_formats from XUI and include them explicitly.
+        // XUI does NOT apply package bouquets automatically when package_id changes via edit_line.
+        // IMPORTANT: send bouquet as raw JSON string (e.g. "[6,8,9,...]"), NOT as a PHP array —
+        // http_build_query encodes PHP arrays as bouquet[0]=6&bouquet[1]=8 which XUI ignores.
         try {
             $pkgResp = $this->requestAsAdmin('get_package', ['id' => $packageId]);
             $pkgData = isset($pkgResp['data']) && is_array($pkgResp['data']) ? $pkgResp['data'] : $pkgResp;
 
-            // Package field 'bouquets' (plural) → edit_line field 'bouquet' (singular)
+            // 'bouquets' (plural) in get_package → 'bouquet' (singular) in edit_line; keep as JSON string.
             $bouquetsRaw = $pkgData['bouquets'] ?? null;
-            if ($bouquetsRaw !== null && $bouquetsRaw !== '' && $bouquetsRaw !== '[]' && $bouquetsRaw !== []) {
-                $bouquetsArr = is_string($bouquetsRaw) ? json_decode($bouquetsRaw, true) : $bouquetsRaw;
-                if (is_array($bouquetsArr) && !empty($bouquetsArr)) {
-                    $params['bouquet'] = $bouquetsArr;
-                    LoggerService::logFile("renewLineAsReseller: applying pkg bouquets for line {$lineId}: " . json_encode($bouquetsArr), "info");
-                }
+            if ($bouquetsRaw !== null && $bouquetsRaw !== '' && $bouquetsRaw !== '[]') {
+                $params['bouquet'] = $bouquetsRaw; // JSON string → http_build_query sends bouquet=[6,8,...]
+                LoggerService::logFile("renewLineAsReseller: applying pkg bouquets for line {$lineId}: {$bouquetsRaw}", "info");
             }
 
-            // Also check vod/series-specific fields if the panel exposes them
+            // output_formats in get_package → allowed_outputs in edit_line; same JSON string format.
+            $outputFormats = $pkgData['output_formats'] ?? null;
+            if ($outputFormats !== null && $outputFormats !== '' && $outputFormats !== '[]') {
+                $params['allowed_outputs'] = $outputFormats;
+            }
+
+            // vod/series bouquets if the panel exposes them (keep as JSON strings)
             foreach (['vod_bouquets' => 'vod_bouquet', 'series_bouquets' => 'series_bouquet'] as $pkgField => $lineField) {
                 $v = $pkgData[$pkgField] ?? null;
-                if ($v !== null && $v !== '' && $v !== '[]' && $v !== []) {
-                    $arr = is_string($v) ? json_decode($v, true) : $v;
-                    if (is_array($arr) && !empty($arr)) {
-                        $params[$lineField] = $arr;
-                    }
+                if ($v !== null && $v !== '' && $v !== '[]') {
+                    $params[$lineField] = $v;
                 }
             }
         } catch (Exception $e) {
             LoggerService::logFile("renewLineAsReseller: could not fetch package bouquets for pkg {$packageId}: " . $e->getMessage(), "warning");
         }
 
-        // Preserve access/restriction fields so the reseller API edit_line doesn't reset them
-        $preserveExtra = ['allowed_outputs', 'is_mag', 'is_e2', 'is_stalker', 'is_isplock',
-                          'allowed_ips', 'allowed_ua', 'forced_country', 'is_restreamer'];
-        foreach ($preserveExtra as $f) {
-            $v = $currentData[$f] ?? null;
-            // Skip nulls, empty strings, and empty arrays/JSON-arrays ("[]") — sending those
-            // causes XUI.ONE to write literal [] into the field instead of leaving it blank.
-            if ($v === null || $v === '' || $v === [] || $v === '[]') {
-                continue;
-            }
-            $params[$f] = $v;
-        }
+        // Do NOT send is_stalker, is_isplock, is_mag, is_e2, is_restreamer etc.
+        // Those are defined by the package; sending 0 would override the package's own defaults.
 
         $this->useResellerAuth($resellerApiKey);
         try {
