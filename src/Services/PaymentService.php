@@ -117,9 +117,11 @@ class PaymentService
             $order['fecha_vencimiento'] = $clientRow['fecha_vencimiento'] ?? null;
 
             if (!empty($order['revendedor_id'])) {
-                // revendedor_id may be either the local `id` or the `xui_user_id` depending on the flow config
-                $credStmt = $db->prepare("SELECT `creditos_cache`, `nombre` FROM `revendedores` WHERE `xui_user_id` = :xid OR `id` = :xid LIMIT 1");
-                $credStmt->execute([':xid' => (int)$order['revendedor_id']]);
+                // revendedor_id may be either the local `id` or the `xui_user_id` depending on the flow config.
+                // Use two distinct parameter names — PDO does not allow the same name twice in one statement.
+                $credStmt = $db->prepare("SELECT `creditos_cache`, `nombre` FROM `revendedores` WHERE `xui_user_id` = :xid OR `id` = :lid LIMIT 1");
+                $rid = (int)$order['revendedor_id'];
+                $credStmt->execute([':xid' => $rid, ':lid' => $rid]);
                 $resellerRow = $credStmt->fetch();
                 $order['creditos_restantes'] = $resellerRow !== false ? (int)$resellerRow['creditos_cache'] : null;
                 $order['revendedor_nombre']  = $resellerRow ? $resellerRow['nombre'] : null;
