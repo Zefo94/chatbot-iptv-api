@@ -403,9 +403,11 @@ class PaymentService
             // If the user's line is already expired, extend starting from NOW.
             // If the user's line is active, extend starting from the future expiration.
             $baseTimestamp = ($currentExpTimestamp > $currentTimestamp) ? $currentExpTimestamp : $currentTimestamp;
-            $secondsToExtend = $daysToExtend * 86400; // 24 * 60 * 60
-            $newExpirationTimestamp = $baseTimestamp + $secondsToExtend;
-            $newExpirationFormatted = date('Y-m-d H:i:s', $newExpirationTimestamp);
+            $newExpirationFormatted = $this->computeExpiry(
+                $baseTimestamp,
+                $daysToExtend,
+                isset($order['package_id']) ? (int)$order['package_id'] : null
+            );
 
             // 5. Renew via reseller API when possible — it preserves bouquets and extends
             //    exp_date by the package duration automatically.
@@ -662,6 +664,39 @@ class PaymentService
         curl_close($ch);
 
         return json_decode($res, true) ?? [];
+    }
+
+    /**
+     * Computes the new expiry date from a base timestamp.
+     * For month/year packages (looked up in precios_paquetes), uses PHP calendar math
+     * (DateTime::modify) so that "6 months" means the same calendar day 6 months later,
+     * not 180 fixed days. Falls back to $fallbackDays * 86400 for day/week units or when
+     * the package cannot be found.
+     */
+    private function computeExpiry(int $baseTs, int $fallbackDays, ?int $packageId): string
+    {
+        if ($packageId) {
+            try {
+                $db   = Connection::getInstance();
+                $stmt = $db->prepare("SELECT duracion, duracion_unidad FROM precios_paquetes WHERE package_id = :pid LIMIT 1");
+                $stmt->execute([':pid' => $packageId]);
+                $row  = $stmt->fetch();
+                if ($row) {
+                    $val  = (int)($row['duracion'] ?? 0);
+                    $unit = strtolower(trim((string)($row['duracion_unidad'] ?? '')));
+                    if ($val > 0 && in_array($unit, ['month', 'months', 'year', 'years'])) {
+                        $modifier = in_array($unit, ['year', 'years']) ? "+{$val} years" : "+{$val} months";
+                        $dt = new \DateTime();
+                        $dt->setTimestamp($baseTs);
+                        $dt->modify($modifier);
+                        return $dt->format('Y-m-d H:i:s');
+                    }
+                }
+            } catch (Exception $e) {
+                LoggerService::logFile("computeExpiry: package lookup failed, using days fallback: " . $e->getMessage(), "warning");
+            }
+        }
+        return date('Y-m-d H:i:s', $baseTs + $fallbackDays * 86400);
     }
 
     /**

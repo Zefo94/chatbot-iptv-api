@@ -252,10 +252,9 @@ class LineController extends BaseController
                 $currentExpTimestamp = $currentTimestamp;
             }
 
-            // 2. Extend expiration timestamp
+            // 2. Extend expiration timestamp (calendar-accurate for month/year packages)
             $baseTimestamp = ($currentExpTimestamp > $currentTimestamp) ? $currentExpTimestamp : $currentTimestamp;
-            $newExpirationTimestamp = $baseTimestamp + ($days * 86400);
-            $newExpirationFormatted = date('Y-m-d H:i:s', $newExpirationTimestamp);
+            $newExpirationFormatted = $this->computeExpiry($baseTimestamp, $days, $packageId);
 
             // 3. Verify reseller has enough credits BEFORE touching XUI (avoid partial state).
             $cost = 0;
@@ -542,6 +541,36 @@ class LineController extends BaseController
         }
 
         return ['before' => $current, 'after' => $newBalance];
+    }
+
+    /**
+     * Calendar-accurate expiry calculation. For month/year packages, uses DateTime::modify()
+     * so "6 months" = same day 6 months later, not 180 fixed days.
+     */
+    private function computeExpiry(int $baseTs, int $fallbackDays, ?int $packageId): string
+    {
+        if ($packageId) {
+            try {
+                $db   = Connection::getInstance();
+                $stmt = $db->prepare("SELECT duracion, duracion_unidad FROM precios_paquetes WHERE package_id = :pid LIMIT 1");
+                $stmt->execute([':pid' => $packageId]);
+                $row  = $stmt->fetch();
+                if ($row) {
+                    $val  = (int)($row['duracion'] ?? 0);
+                    $unit = strtolower(trim((string)($row['duracion_unidad'] ?? '')));
+                    if ($val > 0 && in_array($unit, ['month', 'months', 'year', 'years'])) {
+                        $modifier = in_array($unit, ['year', 'years']) ? "+{$val} years" : "+{$val} months";
+                        $dt = new \DateTime();
+                        $dt->setTimestamp($baseTs);
+                        $dt->modify($modifier);
+                        return $dt->format('Y-m-d H:i:s');
+                    }
+                }
+            } catch (Exception $e) {
+                LoggerService::logFile("computeExpiry: package lookup failed, using days fallback: " . $e->getMessage(), "warning");
+            }
+        }
+        return date('Y-m-d H:i:s', $baseTs + $fallbackDays * 86400);
     }
 
     private function daysFromPackage(int $packageId): int
