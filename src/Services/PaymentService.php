@@ -435,18 +435,6 @@ class PaymentService
                 // to preserve bouquet access. Same-package renewals stack correctly without any fix.
                 $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
                 LoggerService::logFile("resolveRenewal: renewed line {$lineId} via reseller API (bouquets preserved).", "info");
-                // Sync the actual exp_date set by XUI (authoritative) so local DB matches exactly.
-                // computeExpiry is a best-effort estimate; XUI's own calculation is the source of truth.
-                try {
-                    $freshLine = $this->xuiService->getLine($lineId);
-                    $freshData = isset($freshLine['data']) && is_array($freshLine['data']) ? $freshLine['data'] : $freshLine;
-                    if (!empty($freshData['exp_date']) && is_numeric($freshData['exp_date'])) {
-                        $newExpirationFormatted = date('Y-m-d H:i:s', (int)$freshData['exp_date']);
-                        LoggerService::logFile("resolveRenewal: synced exp_date from XUI: {$newExpirationFormatted}", "info");
-                    }
-                } catch (\Exception $syncEx) {
-                    LoggerService::logFile("resolveRenewal: getLine post-renewal failed, keeping computeExpiry value: " . $syncEx->getMessage(), "warning");
-                }
             } else {
                 // Fallback: admin API (clears bouquets but at least renews the line)
                 LoggerService::logFile("resolveRenewal: falling back to admin API for line {$lineId} (no reseller key or no package_id).", "warning");
