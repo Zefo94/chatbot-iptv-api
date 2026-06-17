@@ -1,130 +1,184 @@
 #!/bin/bash
 # =============================================================================
-#  Chatbot IPTV — Instalación Completa en VPS Limpio (Ubuntu 22.04 / 24.04)
-#  Uso: bash install-full.sh
-#  Instala: Nginx + PHP 8.2 + MariaDB + Composer + HTTPS automático (certbot)
+#  Chatbot IPTV — Instalación automática en VPS limpio (Ubuntu 22.04 / 24.04)
+#  Uso: sudo bash install-full.sh
 # =============================================================================
-set -e
+set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+
 info()  { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 fatal() { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
+ask()   { echo -e "${CYAN}  ◆ $*${NC}"; }
 
-echo "=========================================="
-echo "  Chatbot IPTV — Instalación Completa"
-echo "=========================================="
+[[ $EUID -ne 0 ]] && fatal "Ejecuta como root: sudo bash install-full.sh"
 
-# ── Detectar IP pública ────────────────────────────────────────
+clear
+echo ""
+echo -e "${BOLD}${CYAN}  ╔══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${CYAN}  ║   CHATBOT IPTV API — Instalación Automática     ║${NC}"
+echo -e "${BOLD}${CYAN}  ╚══════════════════════════════════════════════════╝${NC}"
+echo ""
+
+# =============================================================================
+#  PASO 1 — Datos mínimos de configuración
+# =============================================================================
+
+# Auto-detectar IP pública
 SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null \
   || curl -s -m 5 https://api.ipify.org 2>/dev/null \
   || hostname -I | awk '{print $1}' || echo "")
 SERVER_IP=$(echo "$SERVER_IP" | tr -d '[:space:]')
-info "IP detectada: $SERVER_IP"
 
-# ── Datos de configuración ────────────────────────────────────
+echo -e "  ${BOLD}Solo necesito 3 datos para instalar. Todo lo demás se configura solo.${NC}"
 echo ""
-read -p "Dominio (ENTER para usar solo IP, ej: solucionesdigitales.icu): " SERVER_DOMAIN
-SERVER_DOMAIN=$(echo "$SERVER_DOMAIN" | tr -d '[:space:]')
 
-if [ -n "$SERVER_DOMAIN" ]; then
-    BASE_URL="https://${SERVER_DOMAIN}"
-    info "Dominio: $SERVER_DOMAIN → se configurará HTTPS automáticamente"
+# Dominio o IP
+ask "Dominio (Enter para usar IP: ${SERVER_IP}):"
+read -r DOMAIN_INPUT
+DOMAIN_INPUT=$(echo "$DOMAIN_INPUT" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+
+if [[ -n "$DOMAIN_INPUT" ]]; then
+    SERVER_NAME="$DOMAIN_INPUT"
+    BASE_URL="https://${DOMAIN_INPUT}"
+    USE_DOMAIN=true
 else
+    SERVER_NAME="_"
     BASE_URL="http://${SERVER_IP}"
-    warn "Sin dominio — usando HTTP. PayPal webhooks requieren HTTPS para producción."
+    USE_DOMAIN=false
 fi
 
-echo ""
-read -p "Email admin (para Let's Encrypt, puede estar vacío): " ADMIN_EMAIL
-read -p "XUI API URL (ej: http://tripic.space/miapixui/): " XUI_API_URL_INPUT
-read -p "XUI API Key (admin): " XUI_API_KEY_INPUT
-read -p "XUI Reseller API URL (ej: http://tripic.space:80/resselerapi/): " XUI_RESELLER_URL_INPUT
-echo ""
-echo "=========================================="
+# Modo SSL (solo si hay dominio)
+SSL_MODE="none"
+ADMIN_EMAIL=""
+if [[ "$USE_DOMAIN" == "true" ]]; then
+    echo ""
+    echo -e "  ¿Cómo maneja el SSL este dominio?"
+    echo -e "  ${CYAN}1)${NC} Cloudflare  — SSL en el proxy, el servidor solo escucha HTTP (recomendado)"
+    echo -e "  ${CYAN}2)${NC} Let's Encrypt — instalar certificado directo en el servidor"
+    echo -e "  ${CYAN}3)${NC} Sin SSL — HTTP solamente"
+    echo ""
+    ask "Elige [1/2/3] (Enter = 1):"
+    read -r SSL_CHOICE
+    SSL_CHOICE="${SSL_CHOICE:-1}"
 
-# ── 0. Limpiar locks de dpkg ────────────────────────────────────
-info "Limpiando locks de dpkg..."
-rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
-dpkg --configure -a 2>/dev/null || true
-
-# ── 1. Limpiar servicios anteriores ─────────────────────────────
-info "Limpiando instalaciones anteriores..."
-if command -v docker &>/dev/null; then
-    docker stop $(docker ps -aq) 2>/dev/null || true
-    docker rm -f $(docker ps -aq) 2>/dev/null || true
+    case "$SSL_CHOICE" in
+        2)
+            SSL_MODE="letsencrypt"
+            ask "Email admin para Let's Encrypt (Enter para omitir):"
+            read -r ADMIN_EMAIL
+            ADMIN_EMAIL=$(echo "$ADMIN_EMAIL" | tr -d '[:space:]')
+            BASE_URL="https://${DOMAIN_INPUT}"
+            ;;
+        3)
+            SSL_MODE="none"
+            BASE_URL="http://${DOMAIN_INPUT}"
+            ;;
+        *)
+            SSL_MODE="cloudflare"
+            BASE_URL="https://${DOMAIN_INPUT}"
+            ;;
+    esac
 fi
+
+# XUI API URL
+ask "URL de tu panel XUI.ONE (ej: http://tupanel.com/miapixui/):"
+read -r XUI_API_URL_INPUT
+XUI_API_URL_INPUT=$(echo "$XUI_API_URL_INPUT" | tr -d '[:space:]')
+[[ -z "$XUI_API_URL_INPUT" ]] && fatal "La URL del panel XUI es obligatoria."
+
+# XUI API Key
+ask "API Key admin del panel XUI:"
+read -r XUI_API_KEY_INPUT
+[[ -z "$XUI_API_KEY_INPUT" ]] && fatal "La API Key de XUI es obligatoria."
+
+# XUI Reseller URL — default a la misma URL del panel
+XUI_RESELLER_URL_INPUT="$XUI_API_URL_INPUT"
+
+echo ""
+info "Datos recibidos. Iniciando instalación automática..."
+echo ""
+
+# =============================================================================
+#  PASO 2 — Limpiar servicios anteriores
+# =============================================================================
+info "Deteniendo servicios anteriores..."
 service nginx stop 2>/dev/null || true
 service php8.2-fpm stop 2>/dev/null || true
 service mariadb stop 2>/dev/null || true
 
-# ── 2. Esperar que no haya locks de apt ─────────────────────────
+# Liberar locks de dpkg
+rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
+dpkg --configure -a 2>/dev/null || true
+
+# Esperar apt libre
 for i in $(seq 1 30); do
-    if fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
-        warn "dpkg ocupado, esperando... ($i/30)"
-        sleep 5
-    else
-        break
-    fi
+    fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break
+    [[ $i -eq 30 ]] && fatal "dpkg ocupado — vuelve a intentarlo"
+    sleep 5
 done
 
-# ── 3. Paquetes base ─────────────────────────────────────────────
-info "Instalando paquetes base..."
+# =============================================================================
+#  PASO 3 — Instalar paquetes del sistema
+# =============================================================================
+info "Instalando paquetes del sistema..."
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq 2>&1 | tail -3
+apt-get update -qq
 
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+apt-get install -y -qq \
     nginx mariadb-server mariadb-client curl git unzip openssl \
-    software-properties-common certbot python3-certbot-nginx 2>&1 | tail -5
+    software-properties-common certbot python3-certbot-nginx
 
-# ── 4. PHP 8.2 desde PPA ondrej ──────────────────────────────────
-info "Instalando PHP 8.2 desde PPA ondrej/php..."
-add-apt-repository -y ppa:ondrej/php 2>&1 | tail -3
-apt-get update -qq 2>&1 | tail -3
+add-apt-repository -y ppa:ondrej/php 2>&1 | tail -1
+apt-get update -qq
 
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+apt-get install -y -qq \
     php8.2-fpm php8.2-mysql php8.2-cli php8.2-xml php8.2-mbstring \
-    php8.2-curl php8.2-zip php8.2-bcmath php8.2-opcache php8.2-intl 2>&1 | tail -5
+    php8.2-curl php8.2-zip php8.2-bcmath php8.2-opcache php8.2-intl
 
-php -v | head -1 || fatal "PHP no se instaló"
-nginx -v 2>&1 | head -1 || fatal "Nginx no se instaló"
-mariadb --version | head -1 || fatal "MariaDB no se instaló"
+php -v | head -1 | grep -q "8.2" || fatal "PHP 8.2 no se instaló correctamente"
+info "PHP 8.2, Nginx y MariaDB instalados"
 
-# ── 5. PHP: timezone ─────────────────────────────────────────────
-info "Configurando PHP timezone..."
+# =============================================================================
+#  PASO 4 — PHP timezone
+# =============================================================================
 echo "date.timezone = America/Montevideo" > /etc/php/8.2/fpm/conf.d/99-timezone.ini
 echo "date.timezone = America/Montevideo" > /etc/php/8.2/cli/conf.d/99-timezone.ini
 
-# ── 6. Clonar repositorio ────────────────────────────────────────
+# =============================================================================
+#  PASO 5 — Clonar repositorio
+# =============================================================================
 info "Clonando repositorio..."
 rm -rf /var/www/html
 mkdir -p /var/www/html
-cd /var/www/html
-git clone https://github.com/Zefo94/chatbot-iptv-api.git . 2>&1 | tail -3
+git clone -q https://github.com/Zefo94/chatbot-iptv-api.git /var/www/html
+info "Código clonado en /var/www/html"
 
-# ── 7. Composer + dependencias PHP ───────────────────────────────
-info "Instalando Composer..."
+# =============================================================================
+#  PASO 6 — Composer
+# =============================================================================
+info "Instalando Composer y dependencias PHP..."
 curl -sS https://getcomposer.org/installer | php -- --quiet
 mv composer.phar /usr/local/bin/composer
 chmod +x /usr/local/bin/composer
+cd /var/www/html
+COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction -q
+info "Dependencias PHP instaladas"
 
-info "Instalando dependencias PHP..."
-COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction 2>&1 | tail -5
-
-# ── 8. MariaDB ───────────────────────────────────────────────────
+# =============================================================================
+#  PASO 7 — Base de datos
+# =============================================================================
 info "Configurando MariaDB..."
 service mariadb start
 
-for i in $(seq 1 15); do
-    if mariadb -u root -e "SELECT 1" &>/dev/null; then
-        info "MariaDB listo tras ${i}s"
-        break
-    fi
-    [ $i -eq 15 ] && fatal "MariaDB no respondió en 15 intentos"
+for i in $(seq 1 20); do
+    mariadb -u root -e "SELECT 1" &>/dev/null && break
+    [[ $i -eq 20 ]] && fatal "MariaDB no respondió"
     sleep 1
 done
 
-# Generar passwords seguros
 CHATBOT_KEY=$(openssl rand -hex 32)
 DB_PASS=$(openssl rand -hex 20)
 
@@ -135,10 +189,12 @@ GRANT ALL PRIVILEGES ON \`iptv_manager\`.* TO 'iptv_user'@'localhost';
 FLUSH PRIVILEGES;
 EOSQL
 
-mariadb -u iptv_user -p"${DB_PASS}" iptv_manager < /var/www/html/schema.sql 2>&1 | tail -3
-info "Base de datos lista"
+mariadb -u iptv_user -p"${DB_PASS}" iptv_manager < /var/www/html/schema.sql
+info "Base de datos 'iptv_manager' creada e importada"
 
-# ── 9. Generar .env completo ─────────────────────────────────────
+# =============================================================================
+#  PASO 8 — Generar .env
+# =============================================================================
 info "Generando .env..."
 
 cat > /var/www/html/.env << EOF
@@ -146,56 +202,74 @@ APP_ENV=production
 APP_DEBUG=false
 APP_URL=${BASE_URL}
 
-# ── Chatbot Auth ──────────────────────────────────────────────────
+# ── Autenticación del Chatbot ──────────────────────────────────────────────
 CHATBOT_API_KEY=${CHATBOT_KEY}
 
-# ── Base de Datos ─────────────────────────────────────────────────
+# ── Base de Datos ──────────────────────────────────────────────────────────
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=iptv_manager
 DB_USER=iptv_user
 DB_PASS=${DB_PASS}
 
-# ── XUI.ONE Panel ─────────────────────────────────────────────────
-XUI_API_URL=${XUI_API_URL_INPUT:-http://tripic.space/miapixui/}
+# ── Panel XUI.ONE ──────────────────────────────────────────────────────────
+XUI_API_URL=${XUI_API_URL_INPUT}
 XUI_API_KEY=${XUI_API_KEY_INPUT}
 XUI_USERNAME=
 XUI_PASSWORD=
-XUI_RESELLER_API_URL=${XUI_RESELLER_URL_INPUT:-http://tripic.space:80/resselerapi/}
+XUI_RESELLER_API_URL=${XUI_RESELLER_URL_INPUT}
 XUI_DEFAULT_PACKAGE_ID=1
 XUI_DEFAULT_MAX_CONNECTIONS=1
 
-# ── PayPal ────────────────────────────────────────────────────────
-PAYPAL_CLIENT_ID=
-PAYPAL_CLIENT_SECRET=
-PAYPAL_WEBHOOK_ID=
-PAYPAL_MODE=sandbox
-PAYPAL_CURRENCY=EUR
-PAYPAL_PRICE_PER_CREDIT=10.00
-PAYPAL_RETURN_URL=${BASE_URL}/pago-exitoso
-PAYPAL_CANCEL_URL=${BASE_URL}/pago-cancelado
+# ── PayPal ─────────────────────────────────────────────────────────────────
+# Descomenta y rellena cuando tengas las credenciales de PayPal.
+#
+# Ejemplo SANDBOX (pruebas):
+#   PAYPAL_CLIENT_ID=AaBbCcDd1234_sandbox_id_aqui
+#   PAYPAL_CLIENT_SECRET=EeFfGgHh5678_sandbox_secret_aqui
+#   PAYPAL_WEBHOOK_ID=WH-SANDBOX-XXXXXXXXXXXX
+#   PAYPAL_MODE=sandbox
+#
+# Ejemplo LIVE (producción):
+#   PAYPAL_CLIENT_ID=AaBbCcDd1234_live_id_aqui
+#   PAYPAL_CLIENT_SECRET=EeFfGgHh5678_live_secret_aqui
+#   PAYPAL_WEBHOOK_ID=WH-XXXXXXXXXXXXXXXX
+#   PAYPAL_MODE=live
+#
+#PAYPAL_CLIENT_ID=
+#PAYPAL_CLIENT_SECRET=
+#PAYPAL_WEBHOOK_ID=
+#PAYPAL_MODE=sandbox
+#PAYPAL_CURRENCY=EUR
+#PAYPAL_PRICE_PER_CREDIT=10.00
+#PAYPAL_RETURN_URL=${BASE_URL}/pago-exitoso
+#PAYPAL_CANCEL_URL=${BASE_URL}/pago-cancelado
 
-# ── Otros gateways (opcional) ─────────────────────────────────────
-WOMPI_PUBLIC_KEY=
-WOMPI_PRIVATE_KEY=
-WOMPI_WEBHOOK_SECRET=
-MERCADOPAGO_ACCESS_TOKEN=
-MERCADOPAGO_WEBHOOK_SECRET=
-BINANCE_API_KEY=
-BINANCE_SECRET_KEY=
+# ── MercadoPago ────────────────────────────────────────────────────────────
+# Descomenta y rellena cuando tengas las credenciales de MercadoPago
+#MERCADOPAGO_ACCESS_TOKEN=
+#MERCADOPAGO_WEBHOOK_SECRET=
+
+# ── Wompi ──────────────────────────────────────────────────────────────────
+# Descomenta y rellena cuando tengas las credenciales de Wompi
+#WOMPI_PUBLIC_KEY=
+#WOMPI_PRIVATE_KEY=
+#WOMPI_WEBHOOK_SECRET=
+
+# ── Binance Pay ────────────────────────────────────────────────────────────
+# Descomenta y rellena cuando tengas las credenciales de Binance
+#BINANCE_API_KEY=
+#BINANCE_SECRET_KEY=
 EOF
 
 chown www-data:www-data /var/www/html/.env
 chmod 600 /var/www/html/.env
+info ".env generado"
 
-# ── 10. Nginx — config HTTP base ─────────────────────────────────
+# =============================================================================
+#  PASO 9 — Nginx
+# =============================================================================
 info "Configurando Nginx..."
-
-if [ -n "$SERVER_DOMAIN" ]; then
-    SERVER_NAME="$SERVER_DOMAIN"
-else
-    SERVER_NAME="_"
-fi
 
 cat > /etc/nginx/sites-available/chatbot << NGINXCONF
 server {
@@ -207,7 +281,6 @@ server {
 
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -218,98 +291,118 @@ server {
         fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_read_timeout 300;
     }
 
-    location ~ /\.ht { deny all; }
+    location ~ /\.(env|ht) { deny all; return 404; }
 }
 NGINXCONF
 
 rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/chatbot /etc/nginx/sites-enabled/chatbot
 
-# ── 11. Permisos ─────────────────────────────────────────────────
+# =============================================================================
+#  PASO 10 — Permisos
+# =============================================================================
 chown -R www-data:www-data /var/www/html
 chmod -R 755 /var/www/html
 mkdir -p /var/www/html/storage/logs /var/www/html/storage/cache
 chown -R www-data:www-data /var/www/html/storage
 chmod -R 775 /var/www/html/storage
+chmod 600 /var/www/html/.env
 
-# ── 12. Arrancar servicios ────────────────────────────────────────
+# =============================================================================
+#  PASO 11 — Arrancar servicios
+# =============================================================================
 info "Arrancando servicios..."
 service php8.2-fpm restart
 service nginx restart
 service mariadb restart
 
-# ── 13. HTTPS automático con certbot ─────────────────────────────
-if [ -n "$SERVER_DOMAIN" ]; then
-    info "Configurando HTTPS con Let's Encrypt..."
-    sleep 2
+# =============================================================================
+#  PASO 12 — SSL
+# =============================================================================
+if [[ "$SSL_MODE" == "cloudflare" ]]; then
+    info "Cloudflare SSL — el servidor escucha HTTP, Cloudflare provee HTTPS"
+    info "Asegúrate de que el proxy de Cloudflare esté activo (nube naranja) para ${DOMAIN_INPUT}"
 
-    CERTBOT_FLAGS="--nginx -d ${SERVER_DOMAIN} --non-interactive --agree-tos"
-    if [ -n "$ADMIN_EMAIL" ]; then
+elif [[ "$SSL_MODE" == "letsencrypt" ]]; then
+    info "Instalando certificado Let's Encrypt..."
+    sleep 2
+    CERTBOT_FLAGS="--nginx -d ${DOMAIN_INPUT} --non-interactive --agree-tos --redirect"
+    if [[ -n "$ADMIN_EMAIL" ]]; then
         CERTBOT_FLAGS="$CERTBOT_FLAGS --email ${ADMIN_EMAIL}"
     else
         CERTBOT_FLAGS="$CERTBOT_FLAGS --register-unsafely-without-email"
     fi
-
-    if certbot $CERTBOT_FLAGS 2>&1 | tail -5; then
-        info "HTTPS configurado correctamente para ${SERVER_DOMAIN}"
-        # Reiniciar nginx con la nueva config SSL de certbot
+    if certbot $CERTBOT_FLAGS 2>/dev/null; then
+        info "Certificado SSL instalado — HTTPS activo"
         service nginx restart
     else
-        warn "Certbot falló — verifica que el dominio ${SERVER_DOMAIN} apunte a esta IP (${SERVER_IP})"
-        warn "Para activar HTTPS manualmente más tarde: certbot --nginx -d ${SERVER_DOMAIN}"
+        warn "Certbot falló — verifica que ${DOMAIN_INPUT} apunte a esta IP (${SERVER_IP})"
+        warn "Para activar SSL luego: certbot --nginx -d ${DOMAIN_INPUT}"
+        BASE_URL="http://${DOMAIN_INPUT}"
     fi
-fi
 
-# ── 14. Verificar ─────────────────────────────────────────────────
-sleep 3
-
-echo ""
-echo "=========================================="
-echo "  Verificando..."
-echo "=========================================="
-
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/api/info" -k 2>/dev/null || echo "000")
-if [ "$HTTP_CODE" = "401" ]; then
-    info "API respondiendo correctamente (401 = necesita X-API-Key) ✓"
-elif [ "$HTTP_CODE" = "200" ]; then
-    info "API respondiendo correctamente ✓"
 else
-    warn "API respondió HTTP ${HTTP_CODE} — revisa los logs: journalctl -u nginx -u php8.2-fpm"
+    info "Sin SSL — API disponible por HTTP"
+fi
+
+# =============================================================================
+#  PASO 13 — Verificar que la API responde
+# =============================================================================
+sleep 2
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/api/info" -k 2>/dev/null || echo "000")
+
+# =============================================================================
+#  RESUMEN FINAL
+# =============================================================================
+SUMMARY_FILE="/root/CHATBOT_CREDENCIALES.txt"
+
+{
+echo "======================================================================"
+echo "  CHATBOT IPTV API — CREDENCIALES DE ACCESO"
+echo "  Instalado: $(date '+%Y-%m-%d %H:%M')"
+echo "======================================================================"
+echo ""
+echo "  URL de la API:      ${BASE_URL}"
+echo "  Endpoint de prueba: ${BASE_URL}/api/info"
+echo "  Webhook de pagos:   ${BASE_URL}/api/webhook-pago?gateway=paypal"
+echo ""
+echo "  API Key (header X-API-Key):"
+echo "  ${CHATBOT_KEY}"
+echo ""
+echo "  ── Base de Datos ─────────────────────────────────────────────"
+echo "  Host:     localhost"
+echo "  BD:       iptv_manager"
+echo "  Usuario:  iptv_user"
+echo "  Password: ${DB_PASS}"
+echo ""
+echo "  ── Archivos importantes ──────────────────────────────────────"
+echo "  Código:   /var/www/html"
+echo "  Config:   /var/www/html/.env"
+echo "  Logs:     /var/www/html/storage/logs/"
+echo "  Nginx:    /etc/nginx/sites-available/chatbot"
+echo ""
+echo "  ── Activar pasarelas de pago ────────────────────────────────"
+echo "  Edita /var/www/html/.env, descomenta la sección de la pasarela"
+echo "  y rellena las credenciales. Luego: service php8.2-fpm restart"
+echo ""
+echo "  ── Comandos útiles ──────────────────────────────────────────"
+echo "  service nginx restart"
+echo "  service php8.2-fpm restart"
+echo "  tail -f /var/www/html/storage/logs/*.log"
+echo "======================================================================"
+} | tee "$SUMMARY_FILE"
+
+echo ""
+if [[ "$HTTP_CODE" == "401" ]] || [[ "$HTTP_CODE" == "200" ]]; then
+    echo -e "${BOLD}${GREEN}  ✅ API respondiendo correctamente (HTTP ${HTTP_CODE})${NC}"
+else
+    echo -e "${BOLD}${YELLOW}  ⚠  API respondió HTTP ${HTTP_CODE} — revisa los logs${NC}"
+    echo -e "     ${YELLOW}journalctl -u nginx -u php8.2-fpm --no-pager | tail -20${NC}"
 fi
 
 echo ""
-echo "=========================================="
-echo -e "${GREEN}  ¡INSTALACIÓN COMPLETA!${NC}"
-echo "=========================================="
-echo ""
-echo -e "${BLUE}  URL de la API:${NC}  ${BASE_URL}/api/info"
-echo -e "${BLUE}  Webhook PayPal:${NC} ${BASE_URL}/api/webhook-pago?gateway=paypal"
-echo ""
-echo -e "${BLUE}  Base de datos:${NC}"
-echo "    DB:   iptv_manager"
-echo "    User: iptv_user"
-echo "    Pass: ${DB_PASS}"
-echo ""
-echo -e "${BLUE}  API Key del chatbot:${NC} ${CHATBOT_KEY}"
-echo ""
-echo -e "${YELLOW}  ════════════════════════════════════════${NC}"
-echo -e "${YELLOW}  CONFIGURACIÓN PENDIENTE EN /var/www/html/.env:${NC}"
-echo -e "${YELLOW}  ════════════════════════════════════════${NC}"
-echo ""
-echo -e "  1. ${RED}PAYPAL_CLIENT_ID${NC}      — ID de tu app PayPal"
-echo -e "  2. ${RED}PAYPAL_CLIENT_SECRET${NC}  — Secret de tu app PayPal"
-echo -e "  3. ${RED}PAYPAL_WEBHOOK_ID${NC}     — ID del webhook en dashboard PayPal"
-echo -e "  4. ${RED}PAYPAL_MODE${NC}           — cambiar sandbox → live en producción"
-echo -e "  5. ${RED}PAYPAL_CURRENCY${NC}       — moneda: EUR, USD, MXN, etc."
-echo -e "  6. ${RED}XUI_API_KEY${NC}           — API Key admin de tu panel XUI"
-echo ""
-echo -e "  Editar: ${BLUE}nano /var/www/html/.env${NC}"
-echo ""
-echo -e "${BLUE}  Comandos útiles:${NC}"
-echo "    service nginx restart"
-echo "    service php8.2-fpm restart"
-echo "    service mariadb restart"
-echo "    tail -f /var/www/html/storage/logs/*.log"
+echo -e "  ${BOLD}Credenciales guardadas en:${NC} ${CYAN}${SUMMARY_FILE}${NC}"
 echo ""

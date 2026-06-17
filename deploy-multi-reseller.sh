@@ -1,34 +1,24 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  deploy-multi-reseller.sh — Deploy multi-reseller de Chatbot IPTV PHP API
+#  deploy-multi-reseller.sh — Deploy multi-revendedor Chatbot IPTV
 #
-#  Instala N instancias del Chatbot IPTV API, una por revendedor.
-#  Cada instancia tiene: su propia BD MySQL, su propio .env, su propio
-#  subdominio en Nginx y SSL con Let's Encrypt.
-#
-#  Uso en servidor Ubuntu 22/24:
-#    wget https://raw.githubusercontent.com/Zefo94/chatbot-iptv-api/main/deploy-multi-reseller.sh
-#    chmod +x deploy-multi-reseller.sh && sudo ./deploy-multi-reseller.sh
+#  Instala N instancias aisladas (BD + Nginx + SSL propios por revendedor).
+#  Uso: sudo bash deploy-multi-reseller.sh
 # =============================================================================
-
 set -euo pipefail
 
-# ── Colores ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; MAGENTA='\033[0;35m'
-BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 
-log()     { echo -e "${GREEN}[✓]${NC} $*"; }
-info()    { echo -e "${BLUE}[i]${NC} $*"; }
+info()    { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
-error()   { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
+fatal()   { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 step()    { echo -e "\n${BOLD}${CYAN}▶ $*${NC}"; }
-section() { echo -e "\n${BOLD}${MAGENTA}══════════════════════════════════════════════════${NC}"; echo -e "${BOLD}${MAGENTA}  $*${NC}"; echo -e "${BOLD}${MAGENTA}══════════════════════════════════════════════════${NC}"; }
+section() { echo -e "\n${BOLD}${CYAN}══════════════════════════════════════════════════${NC}"; echo -e "${BOLD}${CYAN}  $*${NC}"; echo -e "${BOLD}${CYAN}══════════════════════════════════════════════════${NC}"; }
 ask()     { echo -e "${YELLOW}  ◆ $*${NC}"; }
 
-[[ $EUID -ne 0 ]] && error "Ejecuta como root: sudo ./deploy-multi-reseller.sh"
+[[ $EUID -ne 0 ]] && fatal "Ejecuta como root: sudo bash deploy-multi-reseller.sh"
 
-# ── Variables globales ────────────────────────────────────────────────────────
 REPO_SSH="git@github.com:Zefo94/chatbot-iptv-api.git"
 REPO_HTTPS="https://github.com/Zefo94/chatbot-iptv-api.git"
 BRANCH="main"
@@ -36,814 +26,446 @@ BASE_DIR="/var/www"
 SUMMARY_FILE="/root/CHATBOT_RESELLERS.txt"
 PHP_SOCK=""
 
-# Arrays de resellers para el resumen final
-declare -a RES_SLUGS=()
-declare -a RES_NAMES=()
-declare -a RES_DOMAINS=()
-declare -a RES_API_KEYS=()
-declare -a RES_DB_NAMES=()
-declare -a RES_DB_USERS=()
-declare -a RES_DB_PASSES=()
-
-# =============================================================================
-#  BANNER
-# =============================================================================
 clear
 echo ""
 echo -e "${BOLD}${CYAN}  ╔══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}${CYAN}  ║    CHATBOT IPTV API — Deploy Multi-Revendedor           ║${NC}"
-echo -e "${BOLD}${CYAN}  ║    Instala N instancias PHP aisladas en este servidor    ║${NC}"
 echo -e "${BOLD}${CYAN}  ╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${DIM}Repo: github.com/Zefo94/chatbot-iptv-api${NC}"
-echo -e "  ${DIM}Fecha: $(date '+%Y-%m-%d %H:%M')${NC}"
-echo ""
 
 # =============================================================================
-#  PASO 0: Dependencias del sistema
+#  PASO 0 — Dependencias del sistema
 # =============================================================================
-section "PASO 0 — Verificando e instalando dependencias"
+section "PASO 0 — Instalando dependencias"
 
 install_if_missing() {
-  local PKG=$1
-  if ! dpkg -l "$PKG" &>/dev/null; then
-    info "Instalando $PKG..."
-    apt-get install -y "$PKG" -qq
-    log "$PKG instalado"
-  else
-    log "$PKG ya está instalado"
-  fi
+    dpkg -l "$1" &>/dev/null && { info "$1 ya instalado"; return; }
+    apt-get install -y "$1" -qq && info "$1 instalado"
 }
 
 apt-get update -qq
 
-# Nginx
 install_if_missing nginx
+install_if_missing git
+install_if_missing certbot
+install_if_missing python3-certbot-nginx
 
-# MySQL / MariaDB — detectar cuál hay instalado
-if command -v mysql &>/dev/null; then
-  DB_ENGINE=$(mysql --version 2>/dev/null | grep -oi 'mariadb\|mysql' | head -1 | tr '[:upper:]' '[:lower:]')
-  log "Base de datos detectada: ${DB_ENGINE:-mysql/mariadb}"
-else
-  info "Instalando MariaDB..."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server -qq
-  systemctl enable mariadb --now 2>/dev/null || systemctl enable mysql --now 2>/dev/null
-  log "MariaDB instalado y activo"
+# MySQL/MariaDB
+if ! command -v mysql &>/dev/null; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server -qq
+    systemctl enable mariadb --now 2>/dev/null || true
+    info "MariaDB instalado"
 fi
 
-# PHP — detectar versión instalada, si no hay instalar 8.2
+# PHP 8.2
 PHP_VERSION=""
 if command -v php &>/dev/null; then
-  PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
-  if php -m 2>/dev/null | grep -q pdo_mysql; then
-    log "PHP $PHP_VERSION detectado con PDO MySQL"
-  else
-    info "PHP $PHP_VERSION encontrado pero falta pdo_mysql — instalando extensión..."
-    apt-get install -y "php${PHP_VERSION}-mysql" -qq 2>/dev/null || true
-  fi
+    PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
+    info "PHP $PHP_VERSION detectado"
 fi
-
 if [[ -z "$PHP_VERSION" ]]; then
-  info "Instalando PHP 8.2..."
-  add-apt-repository ppa:ondrej/php -y -q 2>/dev/null || true
-  apt-get update -qq
-  apt-get install -y php8.2-fpm php8.2-cli php8.2-mysql php8.2-mbstring \
-    php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath php8.2-intl -qq
-  PHP_VERSION="8.2"
-  log "PHP 8.2 instalado"
+    add-apt-repository ppa:ondrej/php -y -q 2>/dev/null || true
+    apt-get update -qq
+    apt-get install -y php8.2-fpm php8.2-cli php8.2-mysql php8.2-mbstring \
+        php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath php8.2-intl -qq
+    PHP_VERSION="8.2"
+    info "PHP 8.2 instalado"
 fi
 
-# Asegurar que están instaladas todas las extensiones necesarias para la versión detectada
 for EXT in fpm cli mysql mbstring xml curl zip bcmath intl; do
-  if ! dpkg -l "php${PHP_VERSION}-${EXT}" &>/dev/null; then
-    apt-get install -y "php${PHP_VERSION}-${EXT}" -qq 2>/dev/null || true
-  fi
+    dpkg -l "php${PHP_VERSION}-${EXT}" &>/dev/null || \
+        apt-get install -y "php${PHP_VERSION}-${EXT}" -qq 2>/dev/null || true
 done
 
 # Composer
 if ! command -v composer &>/dev/null; then
-  info "Instalando Composer..."
-  curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer -q
-  log "Composer instalado"
-else
-  log "Composer ya está instalado"
+    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer -q
+    info "Composer instalado"
 fi
 
-# Certbot (para SSL)
-if ! command -v certbot &>/dev/null; then
-  info "Instalando Certbot..."
-  apt-get install -y certbot python3-certbot-nginx -qq
-  log "Certbot instalado"
-else
-  log "Certbot ya está instalado"
-fi
-
-# Git
-install_if_missing git
-
-# Detectar socket PHP-FPM según la versión instalada
+# Detectar socket PHP-FPM
 detect_php_sock() {
-  local ver=$1
-  for path in \
-    "/run/php/php${ver}-fpm.sock" \
-    "/var/run/php/php${ver}-fpm.sock" \
-    "/run/php${ver}-fpm.sock"; do
-    if [[ -S "$path" ]]; then echo "unix:$path"; return; fi
-  done
+    for path in "/run/php/php${1}-fpm.sock" "/var/run/php/php${1}-fpm.sock"; do
+        [[ -S "$path" ]] && echo "unix:$path" && return
+    done
 }
-
-PHP_SOCK=$(detect_php_sock "$PHP_VERSION")
-
-if [[ -z "$PHP_SOCK" ]]; then
-  # Iniciar FPM e intentar de nuevo
-  systemctl enable "php${PHP_VERSION}-fpm" --now 2>/dev/null || true
-  sleep 2
-  PHP_SOCK=$(detect_php_sock "$PHP_VERSION")
-fi
-
-# Si aún no hay socket buscar cualquier socket php-fpm disponible
-if [[ -z "$PHP_SOCK" ]]; then
-  FOUND_SOCK=$(find /run/php /var/run/php -name "php*-fpm.sock" 2>/dev/null | head -1)
-  if [[ -n "$FOUND_SOCK" ]]; then
-    PHP_SOCK="unix:$FOUND_SOCK"
-    warn "Usando socket encontrado: $PHP_SOCK"
-  else
-    PHP_SOCK="127.0.0.1:9000"
-    warn "No se encontró socket PHP-FPM, usando TCP $PHP_SOCK"
-  fi
-fi
-
-log "PHP-FPM socket: $PHP_SOCK"
-
-# Asegurarse de que Nginx y PHP-FPM están activos
-systemctl enable nginx --now 2>/dev/null || true
 systemctl enable "php${PHP_VERSION}-fpm" --now 2>/dev/null || true
+sleep 1
+PHP_SOCK=$(detect_php_sock "$PHP_VERSION")
+[[ -z "$PHP_SOCK" ]] && PHP_SOCK="127.0.0.1:9000"
+systemctl enable nginx --now 2>/dev/null || true
+info "PHP-FPM socket: $PHP_SOCK"
 
 # =============================================================================
-#  PASO 1: Configuración de GitHub (SSH o HTTPS)
+#  PASO 1 — Acceso a GitHub
 # =============================================================================
-section "PASO 1 — Acceso al repositorio de GitHub"
+section "PASO 1 — Acceso a GitHub"
 
-# Helpers SSH
-_setup_ssh_config() {
-  local key_path=$1
-  local key_name
-  key_name=$(basename "$key_path")
-  if ! grep -q "$key_name" /root/.ssh/config 2>/dev/null; then
-    cat >> /root/.ssh/config <<SSHCONF
+CLONE_URL=""
+USE_SSH=false
+SSH_KEY_PATH="/root/.ssh/chatbot_deploy_key"
+
+SSH_TEST=$(ssh -T git@github.com -o StrictHostKeyChecking=no -o ConnectTimeout=5 2>&1 || true)
+if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
+    info "Conexión SSH con GitHub activa — usando SSH"
+    USE_SSH=true
+    CLONE_URL="$REPO_SSH"
+else
+    echo ""
+    echo -e "  No hay SSH con GitHub configurado. Elige método:"
+    echo -e "  ${CYAN}1)${NC} SSH — generar clave nueva (recomendado)"
+    echo -e "  ${CYAN}2)${NC} HTTPS — usuario + token"
+    echo ""
+    ask "Elige [1/2]:"
+    read -r GH_METHOD
+
+    if [[ "${GH_METHOD:-1}" == "1" ]]; then
+        USE_SSH=true
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh
+        rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
+        ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
+        if ! grep -q "github.com" /root/.ssh/config 2>/dev/null; then
+            cat >> /root/.ssh/config <<SSHCONF
 
 Host github.com
     HostName github.com
     User git
-    IdentityFile $key_path
+    IdentityFile ${SSH_KEY_PATH}
     StrictHostKeyChecking no
 SSHCONF
-    chmod 600 /root/.ssh/config
-  fi
-}
-
-_show_and_wait_for_key() {
-  local key_path=$1
-  echo ""
-  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo -e "${BOLD}  COPIA ESTA CLAVE Y AGRÉGALA A GITHUB:${NC}"
-  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  cat "${key_path}.pub"
-  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo ""
-  echo -e "  Abre: ${CYAN}https://github.com/Zefo94/chatbot-iptv-api/settings/keys/new${NC}"
-  echo -e "  Título: chatbot-$(hostname)-$(date +%Y%m%d)"
-  echo ""
-  ask "Presiona Enter cuando la hayas agregado en GitHub..."
-  read -r
-  SSH_TEST=$(ssh -T git@github.com -i "$key_path" -o StrictHostKeyChecking=no 2>&1 || true)
-  if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
-    log "Conexión SSH con GitHub verificada"
-  else
-    warn "No se pudo verificar: $SSH_TEST — continuando de todas formas"
-  fi
-}
-
-# ── Probar primero si ya hay SSH con GitHub funcionando ───────────────────────
-USE_SSH=false
-SSH_KEY_PATH=""
-CLONE_URL=""
-
-info "Verificando si ya hay conexión SSH con GitHub..."
-SSH_EXISTING=$(ssh -T git@github.com -o StrictHostKeyChecking=no -o ConnectTimeout=5 2>&1 || true)
-
-if echo "$SSH_EXISTING" | grep -q "successfully authenticated"; then
-  log "¡Ya tienes SSH con GitHub configurado y funcionando!"
-  USE_SSH=true
-  # Detectar qué clave está siendo usada
-  ACTIVE_KEY=$(ssh -T git@github.com -v -o StrictHostKeyChecking=no 2>&1 | grep "Offering public key" | tail -1 | awk '{print $NF}' || true)
-  [[ -n "$ACTIVE_KEY" ]] && info "Clave activa: $ACTIVE_KEY"
-  CLONE_URL="$REPO_SSH"
-  echo ""
-  echo -e "  ${CYAN}1)${NC} Usar la conexión SSH existente (recomendado)"
-  echo -e "  ${CYAN}2)${NC} Generar una nueva clave SSH de todas formas"
-  echo -e "  ${CYAN}3)${NC} Usar HTTPS en su lugar"
-  echo ""
-  ask "Elige [1/2/3] (Enter = 1):"
-  read -r GH_CHOICE
-  GH_CHOICE="${GH_CHOICE:-1}"
-
-  if [[ "$GH_CHOICE" == "2" ]]; then
-    # Generar clave nueva
-    SSH_KEY_PATH="/root/.ssh/chatbot_deploy_key"
-    mkdir -p /root/.ssh && chmod 700 /root/.ssh
-    [[ -f "$SSH_KEY_PATH" ]] && rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
-    ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
-    _setup_ssh_config "$SSH_KEY_PATH"
-    _show_and_wait_for_key "$SSH_KEY_PATH"
-  elif [[ "$GH_CHOICE" == "3" ]]; then
-    USE_SSH=false
-    ask "Usuario de GitHub:"
-    read -r GH_USER
-    ask "Token de acceso personal:"
-    read -rs GH_TOKEN
-    echo ""
-    CLONE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/Zefo94/chatbot-iptv-api.git"
-    log "Usando autenticación HTTPS"
-  else
-    log "Usando la conexión SSH existente"
-  fi
-
-else
-  # No hay SSH con GitHub — ofrecer opciones
-  echo ""
-  echo -e "  No se detectó SSH con GitHub. ¿Cómo quieres autenticarte?"
-  echo -e "  ${CYAN}1)${NC} SSH — generar clave nueva (recomendado para updates automáticos)"
-  echo -e "  ${CYAN}2)${NC} HTTPS — usuario + token (más simple)"
-  echo ""
-  ask "Elige [1/2]:"
-  read -r GH_AUTH_METHOD
-
-  if [[ "$GH_AUTH_METHOD" == "1" ]]; then
-    USE_SSH=true
-    SSH_KEY_PATH="/root/.ssh/chatbot_deploy_key"
-    mkdir -p /root/.ssh && chmod 700 /root/.ssh
-
-    # Buscar TODAS las claves existentes, incluida chatbot_deploy_key
-    FOUND_KEYS=$(find /root/.ssh -name "*.pub" 2>/dev/null || true)
-    if [[ -n "$FOUND_KEYS" ]]; then
-      echo ""
-      info "Se encontraron estas claves SSH en el servidor:"
-      i_key=1
-      while IFS= read -r k; do
-        echo -e "  ${CYAN}${i_key})${NC} ${k}"
-        i_key=$((i_key+1))
-      done <<< "$FOUND_KEYS"
-      echo -e "  ${CYAN}${i_key})${NC} Generar una clave nueva"
-      echo ""
-      ask "¿Cuál usar? Escribe el número o la ruta completa (sin .pub):"
-      read -r KEY_CHOICE
-
-      # Si eligió un número, convertir a ruta
-      if [[ "$KEY_CHOICE" =~ ^[0-9]+$ ]]; then
-        TOTAL_KEYS=$(echo "$FOUND_KEYS" | wc -l)
-        if [[ "$KEY_CHOICE" -le "$TOTAL_KEYS" ]]; then
-          CHOSEN_PUB=$(echo "$FOUND_KEYS" | sed -n "${KEY_CHOICE}p")
-          KEY_CHOICE="${CHOSEN_PUB%.pub}"
-        else
-          KEY_CHOICE=""  # eligió "Generar nueva"
+            chmod 600 /root/.ssh/config
         fi
-      fi
-
-      if [[ -n "$KEY_CHOICE" ]] && [[ -f "$KEY_CHOICE" ]]; then
-        SSH_KEY_PATH="$KEY_CHOICE"
-        log "Usando clave: $SSH_KEY_PATH"
-        SSH_TEST=$(ssh -T git@github.com -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no 2>&1 || true)
-        if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
-          log "Clave verificada con GitHub — listo"
-        else
-          warn "Esta clave no está en GitHub todavía."
-          _show_and_wait_for_key "$SSH_KEY_PATH"
-        fi
-      else
-        # Generar nueva — borrar la anterior si existe para evitar prompt
-        rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
-        ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
-        log "Clave SSH generada"
-        _setup_ssh_config "$SSH_KEY_PATH"
-        _show_and_wait_for_key "$SSH_KEY_PATH"
-      fi
+        echo ""
+        echo -e "${BOLD}${CYAN}  Copia esta clave en GitHub → Settings → SSH Keys:${NC}"
+        echo -e "${CYAN}──────────────────────────────────────────────────${NC}"
+        cat "${SSH_KEY_PATH}.pub"
+        echo -e "${CYAN}──────────────────────────────────────────────────${NC}"
+        echo ""
+        ask "Presiona Enter cuando la hayas agregado en GitHub..."
+        read -r
+        CLONE_URL="$REPO_SSH"
     else
-      # No hay ninguna clave — generar desde cero
-      rm -f "$SSH_KEY_PATH" "${SSH_KEY_PATH}.pub"
-      ssh-keygen -t ed25519 -C "chatbot@$(hostname)" -f "$SSH_KEY_PATH" -N "" -q
-      log "Clave SSH generada"
-      _setup_ssh_config "$SSH_KEY_PATH"
-      _show_and_wait_for_key "$SSH_KEY_PATH"
+        ask "Usuario de GitHub:"
+        read -r GH_USER
+        ask "Token de acceso personal:"
+        read -rs GH_TOKEN
+        echo ""
+        CLONE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/Zefo94/chatbot-iptv-api.git"
     fi
-    CLONE_URL="$REPO_SSH"
-  else
-    ask "Usuario de GitHub:"
-    read -r GH_USER
-    ask "Token de acceso personal:"
-    read -rs GH_TOKEN
-    echo ""
-    CLONE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/Zefo94/chatbot-iptv-api.git"
-    log "Usando autenticación HTTPS"
-  fi
 fi
 
 # =============================================================================
-#  PASO 2: ¿Cuántos revendedores?
+#  PASO 2 — Configuración global (se aplica a todos los revendedores)
 # =============================================================================
-section "PASO 2 — Configuración de revendedores"
+section "PASO 2 — Configuración global"
 
-# ── Leer plantilla del .env existente en /var/www/html ───────────────────────
-EXISTING_HTML=""
-TPL_XUI_URL=""; TPL_XUI_APIKEY=""; TPL_XUI_USER=""; TPL_XUI_PASS=""
-TPL_XUI_RESELLER_URL=""; TPL_XUI_PKG_ID="1"; TPL_XUI_CONNS="1"
-TPL_PAYPAL_CID=""; TPL_PAYPAL_CSEC=""; TPL_PAYPAL_WEBHOOK_ID=""
-TPL_PAYPAL_MODE="sandbox"; TPL_PAYPAL_CURRENCY="EUR"; TPL_PAYPAL_PRICE="10.00"
-TPL_MP_TOKEN=""; TPL_WOMPI_PUB=""; TPL_WOMPI_PRIV=""
-TPL_DB_HOST="127.0.0.1"; TPL_DASHBOARD_PASS=""
-HAS_TEMPLATE=false
-
-_read_env() { grep "^${1}=" "$2" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true; }
-
-if [[ -f "/var/www/html/public/index.php" ]] && [[ -f "/var/www/html/.env" ]]; then
-  ENV_FILE="/var/www/html/.env"
-  echo ""
-  log "Instalación existente detectada en /var/www/html — leyendo configuración..."
-
-  TPL_XUI_URL=$(_read_env "XUI_API_URL"             "$ENV_FILE")
-  TPL_XUI_APIKEY=$(_read_env "XUI_API_KEY"          "$ENV_FILE")   # auth principal del panel
-  TPL_XUI_USER=$(_read_env "XUI_USERNAME"            "$ENV_FILE")   # fallback si usa user/pass
-  TPL_XUI_PASS=$(_read_env "XUI_PASSWORD"            "$ENV_FILE")
-  TPL_XUI_RESELLER_URL=$(_read_env "XUI_RESELLER_API_URL" "$ENV_FILE")
-  TPL_XUI_PKG_ID=$(_read_env "XUI_DEFAULT_PACKAGE_ID"     "$ENV_FILE")
-  TPL_XUI_CONNS=$(_read_env "XUI_DEFAULT_MAX_CONNECTIONS"  "$ENV_FILE")
-  TPL_PAYPAL_CID=$(_read_env "PAYPAL_CLIENT_ID"      "$ENV_FILE")
-  TPL_PAYPAL_CSEC=$(_read_env "PAYPAL_CLIENT_SECRET" "$ENV_FILE")
-  TPL_PAYPAL_WEBHOOK_ID=$(_read_env "PAYPAL_WEBHOOK_ID" "$ENV_FILE")
-  TPL_PAYPAL_MODE=$(_read_env "PAYPAL_MODE"          "$ENV_FILE")
-  TPL_PAYPAL_CURRENCY=$(_read_env "PAYPAL_CURRENCY"  "$ENV_FILE")
-  TPL_PAYPAL_PRICE=$(_read_env "PAYPAL_PRICE_PER_CREDIT" "$ENV_FILE")
-  TPL_MP_TOKEN=$(_read_env "MERCADOPAGO_ACCESS_TOKEN" "$ENV_FILE")
-  TPL_WOMPI_PUB=$(_read_env "WOMPI_PUBLIC_KEY"       "$ENV_FILE")
-  TPL_WOMPI_PRIV=$(_read_env "WOMPI_PRIVATE_KEY"     "$ENV_FILE")
-  TPL_DB_HOST=$(_read_env "DB_HOST"                  "$ENV_FILE")
-  TPL_DASHBOARD_PASS=$(_read_env "DASHBOARD_PASSWORD" "$ENV_FILE")
-
-  [[ -z "$TPL_XUI_PKG_ID"      ]] && TPL_XUI_PKG_ID="1"
-  [[ -z "$TPL_XUI_CONNS"       ]] && TPL_XUI_CONNS="1"
-  [[ -z "$TPL_XUI_RESELLER_URL" ]] && TPL_XUI_RESELLER_URL="$TPL_XUI_URL"
-  [[ -z "$TPL_PAYPAL_MODE"     ]] && TPL_PAYPAL_MODE="sandbox"
-  [[ -z "$TPL_PAYPAL_CURRENCY" ]] && TPL_PAYPAL_CURRENCY="EUR"
-  [[ -z "$TPL_PAYPAL_PRICE"    ]] && TPL_PAYPAL_PRICE="10.00"
-  [[ -z "$TPL_DB_HOST"         ]] && TPL_DB_HOST="127.0.0.1"
-  HAS_TEMPLATE=true
-
-  echo -e "  ${DIM}Plantilla cargada:${NC}"
-  [[ -n "$TPL_XUI_URL"     ]] && echo -e "  ${DIM}  XUI URL    : $TPL_XUI_URL${NC}"
-  [[ -n "$TPL_XUI_APIKEY"  ]] && echo -e "  ${DIM}  XUI API Key: ${TPL_XUI_APIKEY:0:8}...${NC}"
-  [[ -n "$TPL_PAYPAL_CID"  ]] && echo -e "  ${DIM}  PayPal     : $TPL_PAYPAL_MODE / $TPL_PAYPAL_CURRENCY${NC}"
-  [[ -n "$TPL_MP_TOKEN"    ]] && echo -e "  ${DIM}  MercadoPago: configurado${NC}"
-  echo ""
-
-  ask "¿Incluir la instancia de /var/www/html en el resumen final? [S/n]:"
-  read -r INCLUDE_HTML
-  if [[ "${INCLUDE_HTML,,}" != "n" ]]; then
-    EXISTING_HTML="yes"
-    ask "¿Qué nombre/slug tiene ese revendedor? (ej: reseller1):"
-    read -r HTML_SLUG
-    [[ -z "$HTML_SLUG" ]] && HTML_SLUG="principal"
-    EXISTING_API_KEY=$(_read_env "CHATBOT_API_KEY" "$ENV_FILE")
-    EXISTING_DB_NAME=$(_read_env "DB_NAME"         "$ENV_FILE")
-    EXISTING_APP_URL=$(_read_env "APP_URL"         "$ENV_FILE")
-  fi
-fi
-
-echo ""
-ask "¿Cuántos revendedores NUEVOS quieres agregar? [1-10]:"
-read -r NUM_RESELLERS
-if ! [[ "$NUM_RESELLERS" =~ ^[0-9]+$ ]] || [[ "$NUM_RESELLERS" -lt 1 ]] || [[ "$NUM_RESELLERS" -gt 10 ]]; then
-  error "Número inválido. Debe ser entre 1 y 10."
-fi
-
-echo ""
-info "Se configurarán $NUM_RESELLERS revendedor(es) nuevos"
+echo -e "  ${BOLD}Estos datos se aplican a todos los revendedores.${NC}"
+echo -e "  ${DIM}Cada revendedor solo necesita un nombre y su API Key propia de XUI.${NC}"
 echo ""
 
-# Dominio base
-SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null || curl -s -m 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
-info "IP detectada del servidor: $SERVER_IP"
-echo ""
-ask "¿Es correcta esta IP? Si tienes dominio propio escríbelo, si no presiona Enter para usar la IP:"
-read -r CUSTOM_DOMAIN_BASE
-if [[ -z "$CUSTOM_DOMAIN_BASE" ]]; then
-  DOMAIN_BASE="$SERVER_IP"
-  USE_DOMAIN=false
+# IP del servidor
+SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null \
+  || curl -s -m 5 https://api.ipify.org 2>/dev/null \
+  || hostname -I | awk '{print $1}')
+SERVER_IP=$(echo "$SERVER_IP" | tr -d '[:space:]')
+info "IP detectada: $SERVER_IP"
+
+ask "Dominio base (Enter para usar IP, ej: miservidor.com):"
+read -r DOMAIN_BASE_INPUT
+DOMAIN_BASE_INPUT=$(echo "$DOMAIN_BASE_INPUT" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+if [[ -n "$DOMAIN_BASE_INPUT" ]]; then
+    DOMAIN_BASE="$DOMAIN_BASE_INPUT"
+    USE_DOMAIN=true
 else
-  DOMAIN_BASE="$CUSTOM_DOMAIN_BASE"
-  USE_DOMAIN=true
+    DOMAIN_BASE="$SERVER_IP"
+    USE_DOMAIN=false
 fi
 
+ask "URL del panel XUI.ONE (ej: http://tupanel.com/miapixui/):"
+read -r GLOBAL_XUI_URL
+GLOBAL_XUI_URL=$(echo "$GLOBAL_XUI_URL" | tr -d '[:space:]')
+[[ -z "$GLOBAL_XUI_URL" ]] && fatal "La URL del panel XUI es obligatoria."
+
+ask "API Key admin del panel XUI:"
+read -r GLOBAL_XUI_APIKEY
+[[ -z "$GLOBAL_XUI_APIKEY" ]] && fatal "La API Key de XUI es obligatoria."
+
+ask "URL API revendedores XUI (Enter = misma URL del panel):"
+read -r GLOBAL_XUI_RESELLER_URL
+GLOBAL_XUI_RESELLER_URL=$(echo "$GLOBAL_XUI_RESELLER_URL" | tr -d '[:space:]')
+[[ -z "$GLOBAL_XUI_RESELLER_URL" ]] && GLOBAL_XUI_RESELLER_URL="$GLOBAL_XUI_URL"
+
+echo ""
+echo -e "  ${DIM}── Pasarelas de pago (Enter para dejar comentadas, configurar luego) ──${NC}"
+ask "PayPal Client ID (Enter para omitir):"
+read -r GLOBAL_PAYPAL_CID
+ask "PayPal Client Secret (Enter para omitir):"
+read -rs GLOBAL_PAYPAL_CSEC; echo ""
+ask "MercadoPago Access Token (Enter para omitir):"
+read -r GLOBAL_MP_TOKEN
+ask "Wompi Public Key (Enter para omitir):"
+read -r GLOBAL_WOMPI_PUB
+ask "Wompi Private Key (Enter para omitir):"
+read -rs GLOBAL_WOMPI_PRIV; echo ""
+
+echo ""
+ask "¿Cuántos revendedores instalar? [1-10]:"
+read -r NUM_RESELLERS
+[[ ! "$NUM_RESELLERS" =~ ^[1-9]$|^10$ ]] && fatal "Número inválido (1-10)"
+info "Se instalarán $NUM_RESELLERS revendedor(es)"
+
 # =============================================================================
-#  PASO 3: Recopilar datos de cada revendedor
+#  PASO 3 — Datos por revendedor (mínimos)
 # =============================================================================
 section "PASO 3 — Datos de cada revendedor"
 
-if [[ "$HAS_TEMPLATE" == "true" ]]; then
-  info "Los campos comunes se copian del .env existente."
-  info "Solo se piden: nombre, subdominio y credenciales XUI del nuevo panel."
-  echo ""
-fi
+echo -e "  ${DIM}Solo se piden: nombre/slug y la API Key propia del revendedor en XUI.${NC}"
+echo ""
 
-declare -A RESELLER_DATA
-
-# Helper: pide valor con default visible
-ask_default() {
-  local prompt=$1 default=$2 varname=$3
-  if [[ -n "$default" ]]; then
-    ask "${prompt} [Enter = ${default}]:"
-  else
-    ask "${prompt}:"
-  fi
-  local val
-  read -r val
-  if [[ -z "$val" ]]; then val="$default"; fi
-  printf -v "$varname" '%s' "$val"
-}
+declare -A R_DATA
 
 for ((i=1; i<=NUM_RESELLERS; i++)); do
-  echo ""
-  echo -e "${BOLD}${YELLOW}┌─ REVENDEDOR $i de $NUM_RESELLERS ────────────────────────────────┐${NC}"
-  echo ""
+    echo -e "${BOLD}${YELLOW}  ┌─ Revendedor $i de $NUM_RESELLERS ─────────────────────────────┐${NC}"
 
-  # ── Nombre / slug ──────────────────────────────────────────────────────────
-  ask "Nombre del revendedor (sin espacios, ej: reseller2, tiendaXYZ):"
-  read -r SLUG
-  SLUG=$(echo "$SLUG" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
-  [[ -z "$SLUG" ]] && SLUG="reseller$i"
+    ask "Nombre del revendedor (sin espacios, ej: reseller1):"
+    read -r SLUG
+    SLUG=$(echo "$SLUG" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
+    [[ -z "$SLUG" ]] && SLUG="reseller${i}"
 
-  # ── Subdominio ─────────────────────────────────────────────────────────────
-  if [[ "$USE_DOMAIN" == "true" ]]; then
-    echo -e "  ${DIM}Escribe solo el prefijo (ej: titipanel) — se añade .${DOMAIN_BASE} automáticamente${NC}"
-    echo -e "  ${DIM}O escribe el dominio completo si es diferente (ej: api.otrodominio.com)${NC}"
-    ask "Subdominio [Enter = api-${SLUG}.${DOMAIN_BASE}]:"
-    read -r SUBDOMAIN
-    if [[ -z "$SUBDOMAIN" ]]; then
-      FULL_DOMAIN="api-${SLUG}.${DOMAIN_BASE}"
-    elif [[ "$SUBDOMAIN" == *"."* ]]; then
-      # Ya contiene puntos — puede ser prefijo+dominio o dominio completo
-      if [[ "$SUBDOMAIN" == *"${DOMAIN_BASE}" ]]; then
-        # Ya tiene el dominio base incluido — usarlo tal cual
-        FULL_DOMAIN="$SUBDOMAIN"
-      else
-        # Es un subdominio simple con punto (ej: api.titipanel) — añadir dominio base
-        FULL_DOMAIN="${SUBDOMAIN}.${DOMAIN_BASE}"
-      fi
+    if [[ "$USE_DOMAIN" == "true" ]]; then
+        ask "Subdominio (Enter = api-${SLUG}.${DOMAIN_BASE}):"
+        read -r SUBDOMAIN
+        if [[ -z "$SUBDOMAIN" ]]; then
+            FULL_DOMAIN="api-${SLUG}.${DOMAIN_BASE}"
+        elif [[ "$SUBDOMAIN" == *"."* ]]; then
+            FULL_DOMAIN="$SUBDOMAIN"
+        else
+            FULL_DOMAIN="${SUBDOMAIN}.${DOMAIN_BASE}"
+        fi
     else
-      # Solo el prefijo (ej: titipanel) — añadir dominio base
-      FULL_DOMAIN="${SUBDOMAIN}.${DOMAIN_BASE}"
+        FULL_DOMAIN="$SERVER_IP"
     fi
-    info "Dominio final: $FULL_DOMAIN"
-  else
-    FULL_DOMAIN="$SERVER_IP"
-    warn "Sin dominio — usará la IP $SERVER_IP (sin SSL)"
-  fi
 
-  # ── XUI Panel ─────────────────────────────────────────────────────────────
-  echo ""
-  echo -e "  ${DIM}── Panel XUI.ONE ──${NC}"
-
-  if [[ "$HAS_TEMPLATE" == "true" ]]; then
-    # Mismo panel — copiar todo y solo pedir la API key del revendedor
-    XUI_URL="$TPL_XUI_URL"
-    XUI_APIKEY="$TPL_XUI_APIKEY"
-    XUI_USER="$TPL_XUI_USER"
-    XUI_PASS="$TPL_XUI_PASS"
-    XUI_PKG_ID="$TPL_XUI_PKG_ID"
-    XUI_CONNS="$TPL_XUI_CONNS"
-    XUI_RESELLER_URL="$TPL_XUI_RESELLER_URL"
-
-    echo -e "  ${DIM}Panel: $XUI_URL (copiado del existente)${NC}"
-    echo ""
-    ask "API Key del revendedor en XUI (xui_api_key del revendedor):"
+    ask "API Key del revendedor en XUI (xui_api_key del reseller en el panel):"
     read -r XUI_RESELLER_APIKEY
+
+    R_DATA["${i}_slug"]="$SLUG"
+    R_DATA["${i}_domain"]="$FULL_DOMAIN"
+    R_DATA["${i}_xui_reseller_apikey"]="${XUI_RESELLER_APIKEY:-}"
+
+    echo -e "${GREEN}  ✓ Revendedor '$SLUG' registrado${NC}"
     echo ""
-
-    ask "¿Este revendedor usa un panel XUI diferente? [s/N]:"
-    read -r DIFF_PANEL
-    if [[ "${DIFF_PANEL,,}" == "s" ]]; then
-      ask_default "URL del panel XUI.ONE" "$TPL_XUI_URL"  XUI_URL
-      ask_default "Usuario del panel XUI"  "$TPL_XUI_USER" XUI_USER
-      ask "Contraseña del panel XUI:"
-      read -rs XUI_PASS; echo ""
-      ask_default "ID de paquete predeterminado"   "$TPL_XUI_PKG_ID"  XUI_PKG_ID
-      ask_default "Conexiones máximas por defecto" "$TPL_XUI_CONNS"   XUI_CONNS
-      ask_default "URL API revendedores XUI"       "$TPL_XUI_RESELLER_URL" XUI_RESELLER_URL
-    fi
-  else
-    # Sin plantilla — pedir todo
-    ask_default "URL del panel XUI.ONE" "$TPL_XUI_URL"  XUI_URL
-    ask_default "Usuario del panel XUI"  "$TPL_XUI_USER" XUI_USER
-    ask "Contraseña del panel XUI:"
-    read -rs XUI_PASS; echo ""
-    ask_default "ID de paquete predeterminado"   "$TPL_XUI_PKG_ID"  XUI_PKG_ID
-    ask_default "Conexiones máximas por defecto" "$TPL_XUI_CONNS"   XUI_CONNS
-    ask_default "URL API revendedores XUI (Enter = misma URL)" "$TPL_XUI_RESELLER_URL" XUI_RESELLER_URL
-    [[ -z "$XUI_RESELLER_URL" ]] && XUI_RESELLER_URL="$XUI_URL"
-    XUI_RESELLER_APIKEY=""
-  fi
-
-  # ── Pasarelas de pago ─────────────────────────────────────────────────────
-  if [[ "$HAS_TEMPLATE" == "true" ]]; then
-    # Copiar del existente sin preguntar
-    PAYPAL_CID="$TPL_PAYPAL_CID"
-    PAYPAL_CSEC="$TPL_PAYPAL_CSEC"
-    MP_TOKEN="$TPL_MP_TOKEN"
-    WOMPI_PUB="$TPL_WOMPI_PUB"
-    WOMPI_PRIV="$TPL_WOMPI_PRIV"
-
-    echo ""
-    info "Pasarelas de pago copiadas del revendedor existente."
-    ask "¿Cambiar alguna pasarela de pago para este revendedor? [s/N]:"
-    read -r CHANGE_PAY
-    if [[ "${CHANGE_PAY,,}" == "s" ]]; then
-      echo ""
-      ask_default "PayPal Client ID"          "$TPL_PAYPAL_CID"   PAYPAL_CID
-      ask "PayPal Client Secret (Enter = igual):"
-      read -rs PAYPAL_CSEC_IN; echo ""
-      [[ -n "$PAYPAL_CSEC_IN" ]] && PAYPAL_CSEC="$PAYPAL_CSEC_IN"
-      ask_default "MercadoPago Access Token"  "$TPL_MP_TOKEN"     MP_TOKEN
-      ask_default "Wompi Public Key"          "$TPL_WOMPI_PUB"    WOMPI_PUB
-      ask "Wompi Private Key (Enter = igual):"
-      read -rs WOMPI_PRIV_IN; echo ""
-      [[ -n "$WOMPI_PRIV_IN" ]] && WOMPI_PRIV="$WOMPI_PRIV_IN"
-    fi
-  else
-    echo ""
-    echo -e "  ${DIM}── Pasarelas de pago (Enter para omitir) ──${NC}"
-    ask "PayPal Client ID:";          read -r  PAYPAL_CID
-    ask "PayPal Client Secret:";      read -rs PAYPAL_CSEC; echo ""
-    ask "MercadoPago Access Token:";  read -r  MP_TOKEN
-    ask "Wompi Public Key:";          read -r  WOMPI_PUB
-    ask "Wompi Private Key:";         read -rs WOMPI_PRIV; echo ""
-  fi
-  echo ""
-
-  # Guardar en array asociativo
-  RESELLER_DATA["${i}_slug"]="$SLUG"
-  RESELLER_DATA["${i}_domain"]="$FULL_DOMAIN"
-  RESELLER_DATA["${i}_xui_url"]="$XUI_URL"
-  RESELLER_DATA["${i}_xui_apikey"]="${XUI_APIKEY:-}"
-  RESELLER_DATA["${i}_xui_user"]="$XUI_USER"
-  RESELLER_DATA["${i}_xui_pass"]="$XUI_PASS"
-  RESELLER_DATA["${i}_xui_reseller_url"]="$XUI_RESELLER_URL"
-  RESELLER_DATA["${i}_xui_reseller_apikey"]="${XUI_RESELLER_APIKEY:-}"
-  RESELLER_DATA["${i}_xui_pkg_id"]="$XUI_PKG_ID"
-  RESELLER_DATA["${i}_xui_conns"]="$XUI_CONNS"
-  RESELLER_DATA["${i}_paypal_cid"]="${PAYPAL_CID:-$TPL_PAYPAL_CID}"
-  RESELLER_DATA["${i}_paypal_csec"]="${PAYPAL_CSEC:-$TPL_PAYPAL_CSEC}"
-  RESELLER_DATA["${i}_paypal_webhook_id"]="${TPL_PAYPAL_WEBHOOK_ID:-}"
-  RESELLER_DATA["${i}_paypal_mode"]="${TPL_PAYPAL_MODE:-sandbox}"
-  RESELLER_DATA["${i}_paypal_currency"]="${TPL_PAYPAL_CURRENCY:-EUR}"
-  RESELLER_DATA["${i}_paypal_price"]="${TPL_PAYPAL_PRICE:-10.00}"
-  RESELLER_DATA["${i}_mp_token"]="$MP_TOKEN"
-  RESELLER_DATA["${i}_wompi_pub"]="$WOMPI_PUB"
-  RESELLER_DATA["${i}_wompi_priv"]="$WOMPI_PRIV"
-  RESELLER_DATA["${i}_db_host"]="${TPL_DB_HOST:-127.0.0.1}"
-  RESELLER_DATA["${i}_dashboard_pass"]="${TPL_DASHBOARD_PASS:-}"
-
-  echo -e "${BOLD}${GREEN}  ✓ Datos del revendedor '$SLUG' guardados${NC}"
 done
 
 # =============================================================================
-#  PASO 4: MySQL/MariaDB — contraseña root
+#  PASO 4 — Acceso MySQL
 # =============================================================================
-section "PASO 4 — Configuración de MySQL/MariaDB"
+section "PASO 4 — MySQL"
 
-echo ""
-warn "Para crear bases de datos necesito acceso al servidor MySQL/MariaDB."
-ask "Contraseña root de MySQL/MariaDB (Enter si no tiene o usa auth socket):"
-read -rs MYSQL_ROOT_PASS
-echo ""
-
-# Verificar acceso — intentar varias combinaciones (MySQL, MariaDB, socket auth)
-MYSQL_AUTH_SOCKET=false
-if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT 1" &>/dev/null 2>&1; then
-  log "Acceso MySQL/MariaDB verificado (contraseña)"
-elif mysql -u root --socket=/var/run/mysqld/mysqld.sock -e "SELECT 1" &>/dev/null 2>&1; then
-  log "Acceso MariaDB via socket verificado"
-  MYSQL_ROOT_PASS=""
-elif mysql -u root --socket=/run/mysqld/mysqld.sock -e "SELECT 1" &>/dev/null 2>&1; then
-  log "Acceso MariaDB via socket /run/mysqld verificado"
-  MYSQL_ROOT_PASS=""
-else
-  warn "No se pudo conectar con esa contraseña. Intentando sin contraseña..."
-  if mysql -u root -e "SELECT 1" &>/dev/null 2>&1; then
-    log "Acceso MySQL/MariaDB sin contraseña verificado"
-    MYSQL_ROOT_PASS=""
-  else
-    error "No se puede acceder a MySQL. Verifica la contraseña e intenta de nuevo."
-  fi
-fi
+ask "Contraseña root de MySQL/MariaDB (Enter si usa socket sin contraseña):"
+read -rs MYSQL_ROOT_PASS; echo ""
 
 mysql_cmd() {
-  if [[ -n "$MYSQL_ROOT_PASS" ]]; then
-    mysql -u root -p"$MYSQL_ROOT_PASS" -e "$1" 2>/dev/null
-  else
-    mysql -u root -e "$1" 2>/dev/null
-  fi
+    if [[ -n "$MYSQL_ROOT_PASS" ]]; then
+        mysql -u root -p"$MYSQL_ROOT_PASS" -e "$1" 2>/dev/null
+    else
+        mysql -u root -e "$1" 2>/dev/null
+    fi
+}
+mysql_file() {
+    if [[ -n "$MYSQL_ROOT_PASS" ]]; then
+        mysql -u root -p"$MYSQL_ROOT_PASS" "$1" < "$2" 2>/dev/null
+    else
+        mysql -u root "$1" < "$2" 2>/dev/null
+    fi
 }
 
-mysql_file() {
-  if [[ -n "$MYSQL_ROOT_PASS" ]]; then
-    mysql -u root -p"$MYSQL_ROOT_PASS" "$1" < "$2" 2>/dev/null
-  else
-    mysql -u root "$1" < "$2" 2>/dev/null
-  fi
-}
+mysql_cmd "SELECT 1" &>/dev/null || fatal "No se puede conectar a MySQL. Verifica la contraseña."
+info "Acceso MySQL verificado"
 
 # =============================================================================
-#  PASO 5: Desplegar cada revendedor
+#  PASO 5 — Desplegar cada revendedor
 # =============================================================================
 section "PASO 5 — Desplegando revendedores"
 
+declare -a SUMMARY_SLUGS=()
+declare -a SUMMARY_URLS=()
+declare -a SUMMARY_KEYS=()
+declare -a SUMMARY_DBS=()
+declare -a SUMMARY_DB_USERS=()
+declare -a SUMMARY_DB_PASSES=()
+
 for ((i=1; i<=NUM_RESELLERS; i++)); do
-  SLUG="${RESELLER_DATA["${i}_slug"]}"
-  FULL_DOMAIN="${RESELLER_DATA["${i}_domain"]}"
-  XUI_URL="${RESELLER_DATA["${i}_xui_url"]}"
-  XUI_USER="${RESELLER_DATA["${i}_xui_user"]}"
-  XUI_PASS="${RESELLER_DATA["${i}_xui_pass"]}"
-  XUI_RESELLER_URL="${RESELLER_DATA["${i}_xui_reseller_url"]}"
-  XUI_RESELLER_APIKEY="${RESELLER_DATA["${i}_xui_reseller_apikey"]:-}"
-  XUI_PKG_ID="${RESELLER_DATA["${i}_xui_pkg_id"]}"
-  XUI_CONNS="${RESELLER_DATA["${i}_xui_conns"]}"
-  XUI_APIKEY="${RESELLER_DATA["${i}_xui_apikey"]:-}"
-  PAYPAL_CID="${RESELLER_DATA["${i}_paypal_cid"]}"
-  PAYPAL_CSEC="${RESELLER_DATA["${i}_paypal_csec"]}"
-  PAYPAL_WEBHOOK_ID="${RESELLER_DATA["${i}_paypal_webhook_id"]:-}"
-  PAYPAL_MODE="${RESELLER_DATA["${i}_paypal_mode"]:-sandbox}"
-  PAYPAL_CURRENCY="${RESELLER_DATA["${i}_paypal_currency"]:-EUR}"
-  PAYPAL_PRICE="${RESELLER_DATA["${i}_paypal_price"]:-10.00}"
-  MP_TOKEN="${RESELLER_DATA["${i}_mp_token"]}"
-  WOMPI_PUB="${RESELLER_DATA["${i}_wompi_pub"]}"
-  WOMPI_PRIV="${RESELLER_DATA["${i}_wompi_priv"]}"
-  DB_HOST_VAL="${RESELLER_DATA["${i}_db_host"]:-127.0.0.1}"
-  DASHBOARD_PASS="${RESELLER_DATA["${i}_dashboard_pass"]:-}"
+    SLUG="${R_DATA["${i}_slug"]}"
+    FULL_DOMAIN="${R_DATA["${i}_domain"]}"
+    XUI_RESELLER_APIKEY="${R_DATA["${i}_xui_reseller_apikey"]:-}"
 
-  APP_DIR="${BASE_DIR}/chatbot-${SLUG}"
-  DB_NAME="chatbot_${SLUG}"
-  DB_USER="chatbot_${SLUG}"
-  DB_PASS=$(openssl rand -hex 16)
-  CHATBOT_API_KEY=$(openssl rand -hex 32)
+    APP_DIR="${BASE_DIR}/chatbot-${SLUG}"
+    DB_NAME="chatbot_${SLUG}"
+    DB_USER="chatbot_${SLUG}"
+    DB_PASS=$(openssl rand -hex 16)
+    CHATBOT_API_KEY=$(openssl rand -hex 32)
 
-  echo ""
-  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo -e "${BOLD}  Revendedor $i/$NUM_RESELLERS: ${YELLOW}$SLUG${NC}"
-  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    [[ "$USE_DOMAIN" == "true" ]] && APP_URL="https://${FULL_DOMAIN}" || APP_URL="http://${SERVER_IP}:$((8010 + i - 1))"
 
-  # ── Clonar / actualizar repo ──────────────────────────────────────────────
-  step "Clonando repositorio..."
-  if [[ -d "$APP_DIR/.git" ]]; then
-    warn "Directorio $APP_DIR ya existe — actualizando..."
-    cd "$APP_DIR"
-    git pull origin "$BRANCH" || warn "git pull falló, continuando con código existente"
-  else
-    mkdir -p "$(dirname "$APP_DIR")"
-    if [[ "$USE_SSH" == "true" ]] && [[ -n "$SSH_KEY_PATH" ]]; then
-      # SSH con clave específica
-      GIT_SSH_COMMAND="ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no" \
-        git clone -b "$BRANCH" "$CLONE_URL" "$APP_DIR"
+    echo ""
+    echo -e "${BOLD}${CYAN}  ── Revendedor: ${YELLOW}${SLUG}${NC}"
+
+    # Clonar / actualizar
+    step "Clonando código..."
+    if [[ -d "$APP_DIR/.git" ]]; then
+        cd "$APP_DIR"
+        git pull -q origin "$BRANCH" || warn "git pull falló, usando código existente"
     else
-      # SSH con clave del agente / config global, o HTTPS
-      git clone -b "$BRANCH" "$CLONE_URL" "$APP_DIR"
+        mkdir -p "$(dirname "$APP_DIR")"
+        if [[ "$USE_SSH" == "true" ]] && [[ -f "$SSH_KEY_PATH" ]]; then
+            GIT_SSH_COMMAND="ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no" \
+                git clone -q -b "$BRANCH" "$CLONE_URL" "$APP_DIR"
+        else
+            git clone -q -b "$BRANCH" "$CLONE_URL" "$APP_DIR"
+        fi
     fi
-  fi
-  git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
-  log "Código en $APP_DIR"
+    git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 
-  # ── Crear .env ────────────────────────────────────────────────────────────
-  step "Creando archivo .env..."
-  APP_URL_VALUE="http://${FULL_DOMAIN}"
-  if [[ "$USE_DOMAIN" == "true" ]]; then
-    APP_URL_VALUE="https://${FULL_DOMAIN}"
-  fi
+    # .env
+    step "Generando .env..."
 
-  cat > "${APP_DIR}/.env" <<ENVFILE
-# ============================================================
-# Revendedor: $SLUG
-# Generado: $(date '+%Y-%m-%d %H:%M')
-# ============================================================
+    # Construir bloques de pasarelas de pago (comentados si vacíos)
+    _paypal_block() {
+        if [[ -n "$GLOBAL_PAYPAL_CID" ]]; then
+            echo "PAYPAL_CLIENT_ID=${GLOBAL_PAYPAL_CID}"
+            echo "PAYPAL_CLIENT_SECRET=${GLOBAL_PAYPAL_CSEC}"
+            echo "PAYPAL_WEBHOOK_ID="
+            echo "PAYPAL_MODE=sandbox"
+            echo "PAYPAL_CURRENCY=EUR"
+            echo "PAYPAL_PRICE_PER_CREDIT=10.00"
+            echo "PAYPAL_RETURN_URL=${APP_URL}/pago-exitoso"
+            echo "PAYPAL_CANCEL_URL=${APP_URL}/pago-cancelado"
+        else
+            echo "# Ejemplo SANDBOX (pruebas):"
+            echo "#   PAYPAL_CLIENT_ID=AaBbCcDd1234_sandbox_id_aqui"
+            echo "#   PAYPAL_CLIENT_SECRET=EeFfGgHh5678_sandbox_secret_aqui"
+            echo "#   PAYPAL_WEBHOOK_ID=WH-SANDBOX-XXXXXXXXXXXX"
+            echo "#   PAYPAL_MODE=sandbox"
+            echo "#"
+            echo "# Ejemplo LIVE (producción):"
+            echo "#   PAYPAL_CLIENT_ID=AaBbCcDd1234_live_id_aqui"
+            echo "#   PAYPAL_CLIENT_SECRET=EeFfGgHh5678_live_secret_aqui"
+            echo "#   PAYPAL_WEBHOOK_ID=WH-XXXXXXXXXXXXXXXX"
+            echo "#   PAYPAL_MODE=live"
+            echo "#"
+            echo "#PAYPAL_CLIENT_ID="
+            echo "#PAYPAL_CLIENT_SECRET="
+            echo "#PAYPAL_WEBHOOK_ID="
+            echo "#PAYPAL_MODE=sandbox"
+            echo "#PAYPAL_CURRENCY=EUR"
+            echo "#PAYPAL_PRICE_PER_CREDIT=10.00"
+            echo "#PAYPAL_RETURN_URL=${APP_URL}/pago-exitoso"
+            echo "#PAYPAL_CANCEL_URL=${APP_URL}/pago-cancelado"
+        fi
+    }
+    _mp_block() {
+        if [[ -n "$GLOBAL_MP_TOKEN" ]]; then
+            echo "MERCADOPAGO_ACCESS_TOKEN=${GLOBAL_MP_TOKEN}"
+            echo "MERCADOPAGO_WEBHOOK_SECRET="
+        else
+            echo "#MERCADOPAGO_ACCESS_TOKEN="
+            echo "#MERCADOPAGO_WEBHOOK_SECRET="
+        fi
+    }
+    _wompi_block() {
+        if [[ -n "$GLOBAL_WOMPI_PUB" ]]; then
+            echo "WOMPI_PUBLIC_KEY=${GLOBAL_WOMPI_PUB}"
+            echo "WOMPI_PRIVATE_KEY=${GLOBAL_WOMPI_PRIV}"
+            echo "WOMPI_WEBHOOK_SECRET="
+        else
+            echo "#WOMPI_PUBLIC_KEY="
+            echo "#WOMPI_PRIVATE_KEY="
+            echo "#WOMPI_WEBHOOK_SECRET="
+        fi
+    }
+
+    cat > "${APP_DIR}/.env" << ENVEOF
+# Revendedor: ${SLUG} — generado $(date '+%Y-%m-%d %H:%M')
 
 APP_ENV=production
 APP_DEBUG=false
-APP_URL=${APP_URL_VALUE}
+APP_URL=${APP_URL}
 
-# Chatbot Client security key
+# ── Autenticación del Chatbot ──────────────────────────────────────────────
 CHATBOT_API_KEY=${CHATBOT_API_KEY}
 
-# Base de datos
+# ── Base de Datos ──────────────────────────────────────────────────────────
 DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_HOST=${DB_HOST_VAL}
 DB_PORT=3306
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASS=${DB_PASS}
 
-# XUI.ONE Panel
-XUI_API_URL=${XUI_URL}
-XUI_API_KEY=${XUI_APIKEY}
-XUI_USERNAME=${XUI_USER}
-XUI_PASSWORD=${XUI_PASS}
-XUI_RESELLER_API_URL=${XUI_RESELLER_URL}
+# ── Panel XUI.ONE ──────────────────────────────────────────────────────────
+XUI_API_URL=${GLOBAL_XUI_URL}
+XUI_API_KEY=${GLOBAL_XUI_APIKEY}
+XUI_USERNAME=
+XUI_PASSWORD=
+XUI_RESELLER_API_URL=${GLOBAL_XUI_RESELLER_URL}
 XUI_RESELLER_API_KEY=${XUI_RESELLER_APIKEY}
-XUI_DEFAULT_PACKAGE_ID=${XUI_PKG_ID}
-XUI_DEFAULT_MAX_CONNECTIONS=${XUI_CONNS}
+XUI_DEFAULT_PACKAGE_ID=1
+XUI_DEFAULT_MAX_CONNECTIONS=1
 
-# PayPal
-PAYPAL_CLIENT_ID=${PAYPAL_CID}
-PAYPAL_CLIENT_SECRET=${PAYPAL_CSEC}
-PAYPAL_WEBHOOK_ID=${PAYPAL_WEBHOOK_ID}
-PAYPAL_MODE=${PAYPAL_MODE}
-PAYPAL_CURRENCY=${PAYPAL_CURRENCY}
-PAYPAL_PRICE_PER_CREDIT=${PAYPAL_PRICE}
+# ── PayPal ─────────────────────────────────────────────────────────────────
+$(_paypal_block)
 
-# MercadoPago
-MERCADOPAGO_ACCESS_TOKEN=${MP_TOKEN}
-MERCADOPAGO_WEBHOOK_SECRET=
+# ── MercadoPago ────────────────────────────────────────────────────────────
+$(_mp_block)
 
-# Wompi
-WOMPI_PUBLIC_KEY=${WOMPI_PUB}
-WOMPI_PRIVATE_KEY=${WOMPI_PRIV}
-WOMPI_WEBHOOK_SECRET=
+# ── Wompi ──────────────────────────────────────────────────────────────────
+$(_wompi_block)
 
-# Binance
-BINANCE_API_KEY=
-BINANCE_SECRET_KEY=
+# ── Binance Pay ────────────────────────────────────────────────────────────
+#BINANCE_API_KEY=
+#BINANCE_SECRET_KEY=
+ENVEOF
 
-DASHBOARD_PASSWORD=${DASHBOARD_PASS}
-ENVFILE
-  chmod 600 "${APP_DIR}/.env"
-  log ".env creado"
+    chmod 600 "${APP_DIR}/.env"
 
-  # ── Composer install ──────────────────────────────────────────────────────
-  step "Instalando dependencias PHP (composer)..."
-  cd "$APP_DIR"
-  COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader -q
-  log "Composer listo"
+    # Composer
+    step "Instalando dependencias PHP..."
+    cd "$APP_DIR"
+    COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader -q
 
-  # ── Permisos de archivos ──────────────────────────────────────────────────
-  step "Configurando permisos..."
-  chown -R www-data:www-data "$APP_DIR"
-  find "$APP_DIR" -type f -exec chmod 644 {} \;
-  find "$APP_DIR" -type d -exec chmod 755 {} \;
-  chmod 600 "${APP_DIR}/.env"
-  if [[ -d "${APP_DIR}/storage" ]]; then
-    chmod -R 775 "${APP_DIR}/storage"
-    chown -R www-data:www-data "${APP_DIR}/storage"
-  fi
-  log "Permisos configurados"
+    # Permisos
+    chown -R www-data:www-data "$APP_DIR"
+    find "$APP_DIR" -type f -exec chmod 644 {} \;
+    find "$APP_DIR" -type d -exec chmod 755 {} \;
+    chmod 600 "${APP_DIR}/.env"
+    [[ -d "${APP_DIR}/storage" ]] && chmod -R 775 "${APP_DIR}/storage"
 
-  # ── Crear base de datos MySQL ─────────────────────────────────────────────
-  step "Creando base de datos MySQL..."
-  mysql_cmd "DROP DATABASE IF EXISTS \`${DB_NAME}\`;" || true
-  mysql_cmd "CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-  mysql_cmd "DROP USER IF EXISTS '${DB_USER}'@'localhost';" || true
-  mysql_cmd "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
-  mysql_cmd "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';"
-  mysql_cmd "FLUSH PRIVILEGES;"
-  log "Base de datos '${DB_NAME}' creada"
+    # Base de datos
+    step "Creando base de datos..."
+    mysql_cmd "DROP DATABASE IF EXISTS \`${DB_NAME}\`;" || true
+    mysql_cmd "CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    mysql_cmd "DROP USER IF EXISTS '${DB_USER}'@'localhost';" || true
+    mysql_cmd "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
+    mysql_cmd "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';"
+    mysql_cmd "FLUSH PRIVILEGES;"
+    [[ -f "${APP_DIR}/schema.sql" ]] && mysql_file "${DB_NAME}" "${APP_DIR}/schema.sql"
 
-  # ── Importar schema ───────────────────────────────────────────────────────
-  step "Importando schema SQL..."
-  if [[ -f "${APP_DIR}/schema.sql" ]]; then
-    mysql_file "${DB_NAME}" "${APP_DIR}/schema.sql"
-    log "Schema importado correctamente"
-  else
-    warn "No se encontró schema.sql, la BD está vacía"
-  fi
+    # Nginx vhost
+    step "Configurando Nginx..."
+    NGINX_CONF="/etc/nginx/sites-available/chatbot-${SLUG}"
 
-  # ── Nginx vhost ───────────────────────────────────────────────────────────
-  step "Configurando Nginx..."
-  NGINX_CONF="/etc/nginx/sites-available/chatbot-${SLUG}"
-
-  if [[ "$USE_DOMAIN" == "true" ]]; then
-    # Con dominio real
-    cat > "$NGINX_CONF" <<NGINXCONF
+    if [[ "$USE_DOMAIN" == "true" ]]; then
+        cat > "$NGINX_CONF" << NGINXCONF
 server {
     listen 80;
     server_name ${FULL_DOMAIN};
-
     root ${APP_DIR}/public;
     index index.php index.html;
-
     client_max_body_size 50M;
-
     access_log /var/log/nginx/chatbot-${SLUG}-access.log;
     error_log  /var/log/nginx/chatbot-${SLUG}-error.log;
 
-    location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
+    location / { try_files \$uri \$uri/ /index.php?\$query_string; }
 
     location ~ \.php$ {
         fastcgi_pass ${PHP_SOCK};
@@ -853,36 +475,23 @@ server {
         fastcgi_read_timeout 300;
     }
 
-    location ~ /\.env {
-        deny all;
-        return 404;
-    }
-
-    location ~ /\.ht {
-        deny all;
-    }
+    location ~ /\.(env|ht) { deny all; return 404; }
 }
 NGINXCONF
-  else
-    # Sin dominio — usar puerto diferente por cada revendedor
-    PORT=$((8010 + i - 1))
-    RESELLER_DATA["${i}_port"]="$PORT"
-    cat > "$NGINX_CONF" <<NGINXCONF
+    else
+        PORT=$((8010 + i - 1))
+        APP_URL="http://${SERVER_IP}:${PORT}"
+        cat > "$NGINX_CONF" << NGINXCONF
 server {
     listen ${PORT};
     server_name _;
-
     root ${APP_DIR}/public;
     index index.php index.html;
-
     client_max_body_size 50M;
-
     access_log /var/log/nginx/chatbot-${SLUG}-access.log;
     error_log  /var/log/nginx/chatbot-${SLUG}-error.log;
 
-    location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
+    location / { try_files \$uri \$uri/ /index.php?\$query_string; }
 
     location ~ \.php$ {
         fastcgi_pass ${PHP_SOCK};
@@ -892,214 +501,156 @@ server {
         fastcgi_read_timeout 300;
     }
 
-    location ~ /\.env {
-        deny all;
-        return 404;
-    }
-
-    location ~ /\.ht {
-        deny all;
-    }
+    location ~ /\.(env|ht) { deny all; return 404; }
 }
 NGINXCONF
-  fi
-
-  ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/chatbot-${SLUG}"
-  log "Nginx configurado para $SLUG"
-
-  # ── SSL con Let's Encrypt ─────────────────────────────────────────────────
-  if [[ "$USE_DOMAIN" == "true" ]]; then
-    step "Configurando SSL con Let's Encrypt..."
-    ask "¿Configurar SSL para $FULL_DOMAIN? [S/n]:"
-    read -r DO_SSL
-    if [[ "${DO_SSL,,}" != "n" ]]; then
-      nginx -t && systemctl reload nginx
-      if certbot --nginx -d "$FULL_DOMAIN" --non-interactive --agree-tos \
-           -m "admin@${DOMAIN_BASE}" --redirect 2>/dev/null; then
-        log "SSL activo para https://$FULL_DOMAIN"
-        RESELLER_DATA["${i}_ssl"]="true"
-      else
-        warn "No se pudo configurar SSL automáticamente."
-        warn "Ejecuta manualmente: certbot --nginx -d $FULL_DOMAIN"
-        RESELLER_DATA["${i}_ssl"]="false"
-      fi
-    else
-      RESELLER_DATA["${i}_ssl"]="false"
-      info "SSL omitido para $SLUG"
+        ufw allow "${PORT}/tcp" &>/dev/null || true
     fi
-  fi
 
-  # ── Guardar para resumen ──────────────────────────────────────────────────
-  RES_SLUGS+=("$SLUG")
-  RES_NAMES+=("$SLUG")
-  RES_DOMAINS+=("$FULL_DOMAIN")
-  RES_API_KEYS+=("$CHATBOT_API_KEY")
-  RES_DB_NAMES+=("$DB_NAME")
-  RES_DB_USERS+=("$DB_USER")
-  RES_DB_PASSES+=("$DB_PASS")
+    ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/chatbot-${SLUG}"
 
-  log "Revendedor '$SLUG' desplegado correctamente"
+    # SSL
+    if [[ "$USE_DOMAIN" == "true" ]]; then
+        nginx -t 2>/dev/null && systemctl reload nginx
+        echo ""
+        echo -e "  ¿Cómo maneja el SSL ${FULL_DOMAIN}?"
+        echo -e "  ${CYAN}1)${NC} Cloudflare  — proxy activo, servidor solo HTTP (recomendado)"
+        echo -e "  ${CYAN}2)${NC} Let's Encrypt — instalar certificado en el servidor"
+        echo -e "  ${CYAN}3)${NC} Sin SSL — HTTP solamente"
+        echo ""
+        ask "Elige [1/2/3] (Enter = 1):"
+        read -r SSL_CHOICE
+        SSL_CHOICE="${SSL_CHOICE:-1}"
 
+        case "$SSL_CHOICE" in
+            2)
+                if certbot --nginx -d "$FULL_DOMAIN" --non-interactive --agree-tos \
+                     -m "admin@${DOMAIN_BASE}" --redirect 2>/dev/null; then
+                    APP_URL="https://${FULL_DOMAIN}"
+                    info "Let's Encrypt activo para $FULL_DOMAIN"
+                else
+                    warn "Certbot falló — ejecuta luego: certbot --nginx -d ${FULL_DOMAIN}"
+                fi
+                ;;
+            3)
+                APP_URL="http://${FULL_DOMAIN}"
+                info "Sin SSL — HTTP solamente"
+                ;;
+            *)
+                APP_URL="https://${FULL_DOMAIN}"
+                info "Cloudflare SSL — el servidor escucha HTTP, Cloudflare provee HTTPS"
+                ;;
+        esac
+    fi
+
+    SUMMARY_SLUGS+=("$SLUG")
+    SUMMARY_URLS+=("$APP_URL")
+    SUMMARY_KEYS+=("$CHATBOT_API_KEY")
+    SUMMARY_DBS+=("$DB_NAME")
+    SUMMARY_DB_USERS+=("$DB_USER")
+    SUMMARY_DB_PASSES+=("$DB_PASS")
+
+    info "Revendedor '${SLUG}' instalado"
 done
 
 # =============================================================================
-#  PASO 6: Recargar Nginx
+#  PASO 6 — Recargar Nginx
 # =============================================================================
-section "PASO 6 — Activando configuración Nginx"
-
 nginx -t && systemctl reload nginx
-log "Nginx recargado"
-
-# Abrir puertos en firewall si no hay dominio
-if [[ "$USE_DOMAIN" == "false" ]]; then
-  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
-    for ((i=1; i<=NUM_RESELLERS; i++)); do
-      PORT=$((8010 + i - 1))
-      ufw allow "$PORT/tcp" &>/dev/null || true
-    done
-    log "Puertos abiertos en UFW"
-  fi
-fi
+info "Nginx recargado"
 
 # =============================================================================
-#  PASO 7: Script de actualización
+#  PASO 7 — Script de actualización rápida
 # =============================================================================
-section "PASO 7 — Creando script de actualización"
-
-cat > /usr/local/bin/update-chatbot-resellers.sh <<'UPDATESCRIPT'
+cat > /usr/local/bin/update-chatbot-resellers.sh << 'UPDATESCRIPT'
 #!/usr/bin/env bash
-# Actualiza todos los revendedores del chatbot IPTV desde GitHub
-
 set -euo pipefail
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
 for APP_DIR in /var/www/chatbot-*/; do
-  SLUG=$(basename "$APP_DIR" | sed 's/chatbot-//')
-  echo -e "${YELLOW}[→]${NC} Actualizando $SLUG..."
-  if [[ -d "${APP_DIR}.git" ]]; then
+    SLUG=$(basename "$APP_DIR" | sed 's/chatbot-//')
+    [[ ! -d "${APP_DIR}.git" ]] && echo "  Saltando $SLUG (no es repo git)" && continue
+    echo -e "${YELLOW}[→]${NC} Actualizando $SLUG..."
     cd "$APP_DIR"
-    git pull origin main
+    git pull -q origin main
     COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader -q
     chown -R www-data:www-data "$APP_DIR"
     echo -e "${GREEN}[✓]${NC} $SLUG actualizado"
-  else
-    echo "  Saltando $SLUG — no es un repositorio git"
-  fi
 done
 
 nginx -t && systemctl reload nginx
 echo -e "${GREEN}[✓]${NC} Todos los revendedores actualizados"
 UPDATESCRIPT
-
 chmod +x /usr/local/bin/update-chatbot-resellers.sh
-log "Script de actualización: /usr/local/bin/update-chatbot-resellers.sh"
 
 # =============================================================================
 #  RESUMEN FINAL
 # =============================================================================
 section "INSTALACIÓN COMPLETADA"
 
-# Escribir archivo de resumen
 {
 echo "======================================================================"
-echo "  CHATBOT IPTV API — RESUMEN DE INSTALACIÓN"
+echo "  CHATBOT IPTV — CREDENCIALES DE ACCESO"
 echo "  Generado: $(date '+%Y-%m-%d %H:%M')"
 echo "======================================================================"
 echo ""
-echo "Para actualizar todos los revendedores:"
-echo "  sudo update-chatbot-resellers.sh"
+echo "  Para actualizar todos los revendedores:"
+echo "    sudo update-chatbot-resellers.sh"
 echo ""
-echo "----------------------------------------------------------------------"
 } > "$SUMMARY_FILE"
 
-echo ""
-TOTAL_RES=$NUM_RESELLERS
-[[ "$EXISTING_HTML" == "yes" ]] && TOTAL_RES=$((NUM_RESELLERS + 1))
-echo -e "${BOLD}${GREEN}  ✅ INSTALACIÓN COMPLETADA — $TOTAL_RES revendedor(es) en total${NC}"
-echo ""
+for ((i=0; i<${#SUMMARY_SLUGS[@]}; i++)); do
+    SLUG="${SUMMARY_SLUGS[$i]}"
+    URL="${SUMMARY_URLS[$i]}"
+    KEY="${SUMMARY_KEYS[$i]}"
+    DB="${SUMMARY_DBS[$i]}"
+    DBU="${SUMMARY_DB_USERS[$i]}"
+    DBP="${SUMMARY_DB_PASSES[$i]}"
 
-# Mostrar reseller existente en /var/www/html si aplica
-if [[ "$EXISTING_HTML" == "yes" ]]; then
-  echo -e "${BOLD}${CYAN}  ┌─ Revendedor (existente): ${YELLOW}$HTML_SLUG${NC}  ${DIM}[/var/www/html]${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  URL API:     ${GREEN}${EXISTING_APP_URL}${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  API Key:     ${YELLOW}${EXISTING_API_KEY}${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  BD MySQL:    ${DIM}${EXISTING_DB_NAME}${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  Directorio:  ${DIM}/var/www/html${NC}"
-  echo -e "${BOLD}${CYAN}  └──────────────────────────────────────────────${NC}"
-  echo ""
-  {
-  echo "----------------------------------------------------------------------"
-  echo "REVENDEDOR (EXISTENTE): $HTML_SLUG  [/var/www/html]"
-  echo "----------------------------------------------------------------------"
-  echo "  URL API     : $EXISTING_APP_URL"
-  echo "  API Key     : $EXISTING_API_KEY"
-  echo "  BD MySQL    : $EXISTING_DB_NAME"
-  echo "  Directorio  : /var/www/html"
-  echo ""
-  } >> "$SUMMARY_FILE"
-fi
+    echo -e "${BOLD}${CYAN}  ┌─ Revendedor: ${YELLOW}${SLUG}${NC}"
+    echo -e "${BOLD}${CYAN}  │${NC}  URL API:        ${GREEN}${URL}${NC}"
+    echo -e "${BOLD}${CYAN}  │${NC}  API Key:        ${YELLOW}${KEY}${NC}"
+    echo -e "${BOLD}${CYAN}  │${NC}  Prueba:         curl -s ${URL}/api/info -H \"X-API-Key: ${KEY}\""
+    echo -e "${BOLD}${CYAN}  │${NC}  BD:             ${DIM}${DB} / usuario: ${DBU}${NC}"
+    echo -e "${BOLD}${CYAN}  │${NC}  BD Password:    ${DIM}${DBP}${NC}"
+    echo -e "${BOLD}${CYAN}  │${NC}  Directorio:     ${DIM}/var/www/chatbot-${SLUG}${NC}"
+    echo -e "${BOLD}${CYAN}  │${NC}  Config .env:    ${DIM}/var/www/chatbot-${SLUG}/.env${NC}"
+    echo -e "${BOLD}${CYAN}  └──────────────────────────────────────────────${NC}"
+    echo ""
 
-for ((i=0; i<${#RES_SLUGS[@]}; i++)); do
-  SLUG="${RES_SLUGS[$i]}"
-  DOMAIN="${RES_DOMAINS[$i]}"
-  API_KEY="${RES_API_KEYS[$i]}"
-  DB_NAME_V="${RES_DB_NAMES[$i]}"
-  DB_USER_V="${RES_DB_USERS[$i]}"
-  DB_PASS_V="${RES_DB_PASSES[$i]}"
-  APP_DIR="${BASE_DIR}/chatbot-${SLUG}"
-
-  if [[ "$USE_DOMAIN" == "true" ]]; then
-    SSL_FLAG="${RESELLER_DATA["$((i+1))_ssl"]:-false}"
-    if [[ "$SSL_FLAG" == "true" ]]; then
-      API_URL="https://${DOMAIN}"
-    else
-      API_URL="http://${DOMAIN}"
-    fi
-  else
-    PORT=$((8010 + i))
-    API_URL="http://${SERVER_IP}:${PORT}"
-  fi
-
-  echo -e "${BOLD}${CYAN}  ┌─ Revendedor: ${YELLOW}$SLUG${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  URL API:     ${GREEN}${API_URL}${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  API Key:     ${YELLOW}${API_KEY}${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  BD MySQL:    ${DIM}${DB_NAME_V}${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  BD Usuario:  ${DIM}${DB_USER_V}${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  BD Password: ${DIM}${DB_PASS_V}${NC}"
-  echo -e "${BOLD}${CYAN}  │${NC}  Directorio:  ${DIM}${APP_DIR}${NC}"
-  echo -e "${BOLD}${CYAN}  └──────────────────────────────────────────────${NC}"
-  echo ""
-
-  {
-  echo "----------------------------------------------------------------------"
-  echo "REVENDEDOR: $SLUG"
-  echo "----------------------------------------------------------------------"
-  echo "  URL API     : $API_URL"
-  echo "  API Key     : $API_KEY"
-  echo "  BD MySQL    : $DB_NAME_V"
-  echo "  BD Usuario  : $DB_USER_V"
-  echo "  BD Password : $DB_PASS_V"
-  echo "  Directorio  : $APP_DIR"
-  echo ""
-  echo "  Endpoint de prueba:"
-  echo "    curl -s -X POST ${API_URL}/api/info \\"
-  echo "         -H 'Content-Type: application/json' \\"
-  echo "         -H 'X-API-Key: ${API_KEY}'"
-  echo ""
-  } >> "$SUMMARY_FILE"
-
+    {
+    echo "----------------------------------------------------------------------"
+    echo "REVENDEDOR: $SLUG"
+    echo "----------------------------------------------------------------------"
+    echo "  URL API     : $URL"
+    echo "  API Key     : $KEY"
+    echo "  BD          : $DB"
+    echo "  BD Usuario  : $DBU"
+    echo "  BD Password : $DBP"
+    echo "  Directorio  : /var/www/chatbot-${SLUG}"
+    echo "  Config .env : /var/www/chatbot-${SLUG}/.env"
+    echo ""
+    echo "  Activar pasarelas de pago:"
+    echo "    nano /var/www/chatbot-${SLUG}/.env"
+    echo "    (descomenta y rellena PAYPAL_, MERCADOPAGO_, WOMPI_ según necesites)"
+    echo "    service php8.2-fpm restart"
+    echo ""
+    } >> "$SUMMARY_FILE"
 done
 
-echo "----------------------------------------------------------------------" >> "$SUMMARY_FILE"
-echo "Para actualizar todos: sudo update-chatbot-resellers.sh" >> "$SUMMARY_FILE"
-echo "======================================================================" >> "$SUMMARY_FILE"
+{
+echo "======================================================================"
+echo "  Comandos útiles"
+echo "======================================================================"
+echo "  Actualizar todo:  sudo update-chatbot-resellers.sh"
+echo "  Ver logs nginx:   tail -f /var/log/nginx/chatbot-{slug}-error.log"
+echo "  Ver logs API:     tail -f /var/www/chatbot-{slug}/storage/logs/*.log"
+echo "  Reiniciar nginx:  service nginx restart"
+echo "  Reiniciar PHP:    service php8.2-fpm restart"
+echo "======================================================================"
+} >> "$SUMMARY_FILE"
 
-echo -e "  ${DIM}Resumen guardado en: ${BOLD}$SUMMARY_FILE${NC}"
+echo -e "  ${BOLD}Credenciales guardadas en:${NC} ${CYAN}${SUMMARY_FILE}${NC}"
 echo ""
-echo -e "  ${YELLOW}Usa la API Key de cada revendedor como header:${NC}"
-echo -e "  ${DIM}X-API-Key: <api_key>${NC}"
-echo ""
-echo -e "  ${YELLOW}En el chatbot builder (nodo API Request), usa la URL de cada revendedor.${NC}"
-echo ""
-echo -e "${BOLD}${GREEN}  ¡Todo listo! 🎉${NC}"
+echo -e "${BOLD}${GREEN}  ✅ Deploy completado — ${#SUMMARY_SLUGS[@]} revendedor(es) instalados${NC}"
 echo ""

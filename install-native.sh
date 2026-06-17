@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 # ===================================================================
-# Chatbot IPTV — LIMPIEZA TOTAL + INSTALACION NATIVA (sin Docker)
+# Chatbot IPTV — Instalación nativa limpia (Ubuntu 22.04 / 24.04)
 # Usage: bash install-native.sh
 # ===================================================================
 
@@ -24,29 +24,7 @@ SERVER_IP=$(echo "$SERVER_IP" | tr -d '[:space:]')
 echo "  IP detectada: $SERVER_IP"
 echo "=========================================="
 
-# ── 1. LIMPIEZA DOCKER TOTAL ─────────────────────────────────
-info "Limpiando instalación Docker anterior..."
-if command -v docker &> /dev/null; then
-    warn "Deteniendo contenedores..."
-    docker compose -f /opt/chatbot-iptv/docker-compose.yml down 2>/dev/null || true
-    docker stop $(docker ps -aq) 2>/dev/null || true
-
-    warn "Borrando contenedores..."
-    docker rm -f $(docker ps -aq) 2>/dev/null || true
-
-    warn "Borrando imágenes..."
-    docker rmi -f $(docker images -q) 2>/dev/null || true
-
-    warn "Borrando volúmenes..."
-    docker volume rm $(docker volume ls -q) 2>/dev/null || true
-
-    warn "Borrando red de Docker..."
-    docker network rm $(docker network ls -q) 2>/dev/null || true
-else
-    info "Docker no está instalado — omitiendo limpieza Docker"
-fi
-
-# ── 2. DETENER SERVICIOS SI EXISTEN ───────────────────────────
+# ── 1. DETENER SERVICIOS SI EXISTEN ───────────────────────────
 info "Deteniendo servicios anteriores..."
 service nginx stop 2>/dev/null || true
 service php8.2-fpm stop 2>/dev/null || true
@@ -54,7 +32,7 @@ service php8.1-fpm stop 2>/dev/null || true
 service mariadb stop 2>/dev/null || true
 service mysql stop 2>/dev/null || true
 
-# ── 3. INSTALAR PAQUETES ──────────────────────────────────────
+# ── 2. INSTALAR PAQUETES ──────────────────────────────────────
 info "Instalando paquetes..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -89,19 +67,19 @@ apt-get install -y -qq \
 
 info "Paquetes instalados OK"
 
-# ── 4. DIRECTORIOS ───────────────────────────────────────────
+# ── 3. DIRECTORIOS ───────────────────────────────────────────
 info "Configurando directorios..."
 rm -rf /var/www/html/chatbot
 mkdir -p /var/www/html
 chown -R www-data:www-data /var/www/html
 chmod -R 755 /var/www/html
 
-# ── 5. CLONAR REPO ───────────────────────────────────────────
+# ── 4. CLONAR REPO ───────────────────────────────────────────
 info "Clonando repositorio..."
 cd /var/www/html
 git clone https://github.com/Zefo94/chatbot-iptv-api.git . 2>&1 | tail -3
 
-# ── 6. COMPOSER ──────────────────────────────────────────────
+# ── 5. COMPOSER ──────────────────────────────────────────────
 info "Instalando Composer..."
 curl -sS https://getcomposer.org/installer | php
 mv composer.phar /usr/local/bin/composer
@@ -110,7 +88,7 @@ chmod +x /usr/local/bin/composer
 info "Instalando dependencias PHP..."
 composer install --no-dev --optimize-autoloader --no-interaction 2>&1 | tail -3
 
-# ── 7. BASE DE DATOS ──────────────────────────────────────────
+# ── 6. BASE DE DATOS ──────────────────────────────────────────
 info "Configurando MySQL..."
 service mariadb start
 
@@ -129,7 +107,7 @@ rm /tmp/init_db.sql
 
 info "Base de datos importada OK"
 
-# ── 8. GENERAR .env ─────────────────────────────────────────
+# ── 7. GENERAR .env ─────────────────────────────────────────
 info "Generando .env..."
 MYSQL_ROOT_PASS=$(openssl rand -hex 20)
 DB_PASS=$(openssl rand -hex 20)
@@ -145,6 +123,7 @@ DB_PORT=3306
 DB_NAME=iptv_manager
 DB_USER=iptv_user
 DB_PASS=${DB_PASS}
+# ── Panel XUI.ONE — rellena estos campos ──────────────────────────────────
 XUI_API_URL=
 XUI_API_KEY=
 XUI_USERNAME=
@@ -152,14 +131,41 @@ XUI_PASSWORD=
 XUI_RESELLER_API_URL=
 XUI_DEFAULT_PACKAGE_ID=1
 XUI_DEFAULT_MAX_CONNECTIONS=1
-PAYPAL_CLIENT_ID=
-PAYPAL_CLIENT_SECRET=
-PAYPAL_WEBHOOK_ID=
-PAYPAL_MODE=sandbox
-PAYPAL_CURRENCY=EUR
-PAYPAL_PRICE_PER_CREDIT=10.00
-PAYPAL_RETURN_URL=http://${SERVER_IP}/pago-exitoso
-PAYPAL_CANCEL_URL=http://${SERVER_IP}/pago-cancelado
+
+# ── PayPal ─────────────────────────────────────────────────────────────────
+# Ejemplo SANDBOX (pruebas):
+#   PAYPAL_CLIENT_ID=AaBbCcDd1234_sandbox_id_aqui
+#   PAYPAL_CLIENT_SECRET=EeFfGgHh5678_sandbox_secret_aqui
+#   PAYPAL_WEBHOOK_ID=WH-SANDBOX-XXXXXXXXXXXX
+#   PAYPAL_MODE=sandbox
+#
+# Ejemplo LIVE (producción):
+#   PAYPAL_CLIENT_ID=AaBbCcDd1234_live_id_aqui
+#   PAYPAL_CLIENT_SECRET=EeFfGgHh5678_live_secret_aqui
+#   PAYPAL_WEBHOOK_ID=WH-XXXXXXXXXXXXXXXX
+#   PAYPAL_MODE=live
+#
+#PAYPAL_CLIENT_ID=
+#PAYPAL_CLIENT_SECRET=
+#PAYPAL_WEBHOOK_ID=
+#PAYPAL_MODE=sandbox
+#PAYPAL_CURRENCY=EUR
+#PAYPAL_PRICE_PER_CREDIT=10.00
+#PAYPAL_RETURN_URL=http://${SERVER_IP}/pago-exitoso
+#PAYPAL_CANCEL_URL=http://${SERVER_IP}/pago-cancelado
+
+# ── MercadoPago ────────────────────────────────────────────────────────────
+#MERCADOPAGO_ACCESS_TOKEN=
+#MERCADOPAGO_WEBHOOK_SECRET=
+
+# ── Wompi ──────────────────────────────────────────────────────────────────
+#WOMPI_PUBLIC_KEY=
+#WOMPI_PRIVATE_KEY=
+#WOMPI_WEBHOOK_SECRET=
+
+# ── Binance Pay ────────────────────────────────────────────────────────────
+#BINANCE_API_KEY=
+#BINANCE_SECRET_KEY=
 EOF
 
 # BUG FIX: HEREDOC sin comillas para que ${DB_PASS} se sustituya correctamente
@@ -171,7 +177,7 @@ EOSQL
 chown www-data:www-data /var/www/html/.env
 chmod 600 /var/www/html/.env
 
-# ── 9. NGINX ──────────────────────────────────────────────────
+# ── 8. NGINX ──────────────────────────────────────────────────
 info "Configurando Nginx..."
 
 cat > /etc/nginx/sites-available/chatbot << 'NGINX'
@@ -204,19 +210,19 @@ NGINX
 rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/chatbot /etc/nginx/sites-enabled/chatbot
 
-# ── 10. PERMISOS ─────────────────────────────────────────────
+# ── 9. PERMISOS ─────────────────────────────────────────────
 chown -R www-data:www-data /var/www/html
 chmod -R 755 /var/www/html
 mkdir -p /var/www/html/storage/logs /var/www/html/storage/cache
 chown -R www-data:www-data /var/www/html/storage
 
-# ── 11. ARRANCAR SERVICIOS ────────────────────────────────────
+# ── 10. ARRANCAR SERVICIOS ────────────────────────────────────
 info "Arrancando servicios..."
 service php8.2-fpm restart
 service nginx restart
 service mariadb restart
 
-# ── 12. VERIFICAR ────────────────────────────────────────────
+# ── 11. VERIFICAR ────────────────────────────────────────────
 sleep 2
 
 echo ""
