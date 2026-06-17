@@ -44,17 +44,17 @@ install_if_missing() {
 }
 
 apt-get update -qq
-
-install_if_missing nginx
-install_if_missing git
-install_if_missing certbot
-install_if_missing python3-certbot-nginx
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    curl git unzip openssl software-properties-common \
+    certbot python3-certbot-nginx nginx
 
 # MySQL/MariaDB
 if ! command -v mysql &>/dev/null; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server -qq
     systemctl enable mariadb --now 2>/dev/null || true
     info "MariaDB instalado"
+else
+    info "MariaDB ya instalado"
 fi
 
 # PHP 8.2
@@ -64,10 +64,12 @@ if command -v php &>/dev/null; then
     info "PHP $PHP_VERSION detectado"
 fi
 if [[ -z "$PHP_VERSION" ]]; then
-    add-apt-repository ppa:ondrej/php -y -q 2>/dev/null || true
+    info "Agregando PPA ondrej/php..."
+    add-apt-repository ppa:ondrej/php -y
     apt-get update -qq
-    apt-get install -y php8.2-fpm php8.2-cli php8.2-mysql php8.2-mbstring \
-        php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath php8.2-intl -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        php8.2-fpm php8.2-cli php8.2-mysql php8.2-mbstring \
+        php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath php8.2-intl
     PHP_VERSION="8.2"
     info "PHP 8.2 instalado"
 fi
