@@ -98,6 +98,49 @@ read -r XUI_API_KEY_INPUT
 XUI_RESELLER_URL_INPUT="$XUI_API_URL_INPUT"
 
 echo ""
+echo -e "  ${DIM}── Pasarelas de pago (Enter para dejar comentadas, configurar luego) ──${NC}"
+
+PAYPAL_CID=""; PAYPAL_CSEC=""; PAYPAL_WEBHOOK_ID=""
+PAYPAL_MODE="sandbox"; PAYPAL_CURRENCY="EUR"; PAYPAL_PRICE="10.00"
+ask "PayPal Client ID (Enter para omitir):"
+read -r PAYPAL_CID
+if [[ -n "$PAYPAL_CID" ]]; then
+    ask "PayPal Client Secret:"
+    read -rs PAYPAL_CSEC; echo ""
+    ask "PayPal Webhook ID:"
+    read -r PAYPAL_WEBHOOK_ID
+    echo -e "  ${DIM}Modo: 1) sandbox (pruebas)  2) live (producción)${NC}"
+    ask "Modo PayPal [1/2] (Enter = sandbox):"
+    read -r PM; [[ "${PM:-1}" == "2" ]] && PAYPAL_MODE="live" || PAYPAL_MODE="sandbox"
+    ask "Moneda (Enter = EUR):"
+    read -r PC; PAYPAL_CURRENCY="${PC:-EUR}"
+    ask "Precio por crédito (Enter = 10.00):"
+    read -r PP; PAYPAL_PRICE="${PP:-10.00}"
+fi
+
+MP_TOKEN=""; MP_WEBHOOK=""
+ask "MercadoPago Access Token (Enter para omitir):"
+read -r MP_TOKEN
+if [[ -n "$MP_TOKEN" ]]; then
+    ask "MercadoPago Webhook Secret (Enter para omitir):"
+    read -r MP_WEBHOOK
+fi
+
+WOMPI_PUB=""; WOMPI_PRIV=""; WOMPI_WEBHOOK=""
+ask "Wompi Public Key (Enter para omitir):"
+read -r WOMPI_PUB
+if [[ -n "$WOMPI_PUB" ]]; then
+    ask "Wompi Private Key:"
+    read -rs WOMPI_PRIV; echo ""
+    ask "Wompi Webhook Secret (Enter para omitir):"
+    read -r WOMPI_WEBHOOK
+fi
+
+echo ""
+ask "Contraseña del Dashboard (Enter para dejar vacía):"
+read -rs DASHBOARD_PASS; echo ""
+
+echo ""
 info "Datos recibidos. Iniciando instalación automática..."
 echo ""
 
@@ -221,9 +264,21 @@ XUI_RESELLER_API_URL=${XUI_RESELLER_URL_INPUT}
 XUI_DEFAULT_PACKAGE_ID=1
 XUI_DEFAULT_MAX_CONNECTIONS=1
 
+$(if [[ -n "$PAYPAL_CID" ]]; then
+cat << PAYPAL
 # ── PayPal ─────────────────────────────────────────────────────────────────
-# Descomenta y rellena cuando tengas las credenciales de PayPal.
-#
+PAYPAL_CLIENT_ID=${PAYPAL_CID}
+PAYPAL_CLIENT_SECRET=${PAYPAL_CSEC}
+PAYPAL_WEBHOOK_ID=${PAYPAL_WEBHOOK_ID}
+PAYPAL_MODE=${PAYPAL_MODE}
+PAYPAL_CURRENCY=${PAYPAL_CURRENCY}
+PAYPAL_PRICE_PER_CREDIT=${PAYPAL_PRICE}
+PAYPAL_RETURN_URL=${BASE_URL}/pago-exitoso
+PAYPAL_CANCEL_URL=${BASE_URL}/pago-cancelado
+PAYPAL
+else
+cat << PAYPAL
+# ── PayPal ─────────────────────────────────────────────────────────────────
 # Ejemplo SANDBOX (pruebas):
 #   PAYPAL_CLIENT_ID=AaBbCcDd1234_sandbox_id_aqui
 #   PAYPAL_CLIENT_SECRET=EeFfGgHh5678_sandbox_secret_aqui
@@ -244,22 +299,41 @@ XUI_DEFAULT_MAX_CONNECTIONS=1
 #PAYPAL_PRICE_PER_CREDIT=10.00
 #PAYPAL_RETURN_URL=${BASE_URL}/pago-exitoso
 #PAYPAL_CANCEL_URL=${BASE_URL}/pago-cancelado
+PAYPAL
+fi)
 
+$(if [[ -n "$MP_TOKEN" ]]; then
+cat << MP
 # ── MercadoPago ────────────────────────────────────────────────────────────
-# Descomenta y rellena cuando tengas las credenciales de MercadoPago
-#MERCADOPAGO_ACCESS_TOKEN=
-#MERCADOPAGO_WEBHOOK_SECRET=
+MERCADOPAGO_ACCESS_TOKEN=${MP_TOKEN}
+MERCADOPAGO_WEBHOOK_SECRET=${MP_WEBHOOK}
+MP
+else
+echo "# ── MercadoPago ──────────────────────────────────────────────────────────"
+echo "#MERCADOPAGO_ACCESS_TOKEN="
+echo "#MERCADOPAGO_WEBHOOK_SECRET="
+fi)
 
+$(if [[ -n "$WOMPI_PUB" ]]; then
+cat << WOMPI
 # ── Wompi ──────────────────────────────────────────────────────────────────
-# Descomenta y rellena cuando tengas las credenciales de Wompi
-#WOMPI_PUBLIC_KEY=
-#WOMPI_PRIVATE_KEY=
-#WOMPI_WEBHOOK_SECRET=
+WOMPI_PUBLIC_KEY=${WOMPI_PUB}
+WOMPI_PRIVATE_KEY=${WOMPI_PRIV}
+WOMPI_WEBHOOK_SECRET=${WOMPI_WEBHOOK}
+WOMPI
+else
+echo "# ── Wompi ────────────────────────────────────────────────────────────────"
+echo "#WOMPI_PUBLIC_KEY="
+echo "#WOMPI_PRIVATE_KEY="
+echo "#WOMPI_WEBHOOK_SECRET="
+fi)
 
 # ── Binance Pay ────────────────────────────────────────────────────────────
-# Descomenta y rellena cuando tengas las credenciales de Binance
 #BINANCE_API_KEY=
 #BINANCE_SECRET_KEY=
+
+# ── Dashboard ──────────────────────────────────────────────────────────────
+DASHBOARD_PASSWORD=${DASHBOARD_PASS}
 EOF
 
 chown www-data:www-data /var/www/html/.env

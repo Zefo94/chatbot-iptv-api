@@ -212,16 +212,50 @@ GLOBAL_XUI_RESELLER_URL=$(echo "$GLOBAL_XUI_RESELLER_URL" | tr -d '[:space:]')
 
 echo ""
 echo -e "  ${DIM}── Pasarelas de pago (Enter para dejar comentadas, configurar luego) ──${NC}"
+
+# PayPal
 ask "PayPal Client ID (Enter para omitir):"
 read -r GLOBAL_PAYPAL_CID
-ask "PayPal Client Secret (Enter para omitir):"
-read -rs GLOBAL_PAYPAL_CSEC; echo ""
+GLOBAL_PAYPAL_CSEC=""; GLOBAL_PAYPAL_WEBHOOK_ID=""
+GLOBAL_PAYPAL_MODE="sandbox"; GLOBAL_PAYPAL_CURRENCY="EUR"; GLOBAL_PAYPAL_PRICE="10.00"
+if [[ -n "$GLOBAL_PAYPAL_CID" ]]; then
+    ask "PayPal Client Secret:"
+    read -rs GLOBAL_PAYPAL_CSEC; echo ""
+    ask "PayPal Webhook ID:"
+    read -r GLOBAL_PAYPAL_WEBHOOK_ID
+    echo -e "  ${DIM}Modo PayPal: 1) sandbox (pruebas)  2) live (producción)${NC}"
+    ask "Modo [1/2] (Enter = sandbox):"
+    read -r PM; [[ "${PM:-1}" == "2" ]] && GLOBAL_PAYPAL_MODE="live" || GLOBAL_PAYPAL_MODE="sandbox"
+    ask "Moneda PayPal (Enter = EUR):"
+    read -r PC; GLOBAL_PAYPAL_CURRENCY="${PC:-EUR}"
+    ask "Precio por crédito (Enter = 10.00):"
+    read -r PP; GLOBAL_PAYPAL_PRICE="${PP:-10.00}"
+fi
+
+# MercadoPago
 ask "MercadoPago Access Token (Enter para omitir):"
 read -r GLOBAL_MP_TOKEN
+GLOBAL_MP_WEBHOOK=""
+if [[ -n "$GLOBAL_MP_TOKEN" ]]; then
+    ask "MercadoPago Webhook Secret (Enter para omitir):"
+    read -r GLOBAL_MP_WEBHOOK
+fi
+
+# Wompi
 ask "Wompi Public Key (Enter para omitir):"
 read -r GLOBAL_WOMPI_PUB
-ask "Wompi Private Key (Enter para omitir):"
-read -rs GLOBAL_WOMPI_PRIV; echo ""
+GLOBAL_WOMPI_PRIV=""; GLOBAL_WOMPI_WEBHOOK=""
+if [[ -n "$GLOBAL_WOMPI_PUB" ]]; then
+    ask "Wompi Private Key:"
+    read -rs GLOBAL_WOMPI_PRIV; echo ""
+    ask "Wompi Webhook Secret (Enter para omitir):"
+    read -r GLOBAL_WOMPI_WEBHOOK
+fi
+
+# Dashboard
+echo ""
+ask "Contraseña del Dashboard (Enter para dejar vacía):"
+read -rs GLOBAL_DASHBOARD_PASS; echo ""
 
 echo ""
 ask "¿Cuántos revendedores instalar? [1-10]:"
@@ -350,10 +384,10 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
         if [[ -n "$GLOBAL_PAYPAL_CID" ]]; then
             echo "PAYPAL_CLIENT_ID=${GLOBAL_PAYPAL_CID}"
             echo "PAYPAL_CLIENT_SECRET=${GLOBAL_PAYPAL_CSEC}"
-            echo "PAYPAL_WEBHOOK_ID="
-            echo "PAYPAL_MODE=sandbox"
-            echo "PAYPAL_CURRENCY=EUR"
-            echo "PAYPAL_PRICE_PER_CREDIT=10.00"
+            echo "PAYPAL_WEBHOOK_ID=${GLOBAL_PAYPAL_WEBHOOK_ID}"
+            echo "PAYPAL_MODE=${GLOBAL_PAYPAL_MODE}"
+            echo "PAYPAL_CURRENCY=${GLOBAL_PAYPAL_CURRENCY}"
+            echo "PAYPAL_PRICE_PER_CREDIT=${GLOBAL_PAYPAL_PRICE}"
             echo "PAYPAL_RETURN_URL=${APP_URL}/pago-exitoso"
             echo "PAYPAL_CANCEL_URL=${APP_URL}/pago-cancelado"
         else
@@ -382,7 +416,7 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
     _mp_block() {
         if [[ -n "$GLOBAL_MP_TOKEN" ]]; then
             echo "MERCADOPAGO_ACCESS_TOKEN=${GLOBAL_MP_TOKEN}"
-            echo "MERCADOPAGO_WEBHOOK_SECRET="
+            echo "MERCADOPAGO_WEBHOOK_SECRET=${GLOBAL_MP_WEBHOOK}"
         else
             echo "#MERCADOPAGO_ACCESS_TOKEN="
             echo "#MERCADOPAGO_WEBHOOK_SECRET="
@@ -392,7 +426,7 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
         if [[ -n "$GLOBAL_WOMPI_PUB" ]]; then
             echo "WOMPI_PUBLIC_KEY=${GLOBAL_WOMPI_PUB}"
             echo "WOMPI_PRIVATE_KEY=${GLOBAL_WOMPI_PRIV}"
-            echo "WOMPI_WEBHOOK_SECRET="
+            echo "WOMPI_WEBHOOK_SECRET=${GLOBAL_WOMPI_WEBHOOK}"
         else
             echo "#WOMPI_PUBLIC_KEY="
             echo "#WOMPI_PRIVATE_KEY="
@@ -439,6 +473,9 @@ $(_wompi_block)
 # ── Binance Pay ────────────────────────────────────────────────────────────
 #BINANCE_API_KEY=
 #BINANCE_SECRET_KEY=
+
+# ── Dashboard ──────────────────────────────────────────────────────────────
+DASHBOARD_PASSWORD=${GLOBAL_DASHBOARD_PASS}
 ENVEOF
 
     chmod 600 "${APP_DIR}/.env"
