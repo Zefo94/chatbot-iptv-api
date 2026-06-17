@@ -83,19 +83,24 @@ if [[ "$USE_DOMAIN" == "true" ]]; then
     esac
 fi
 
-# XUI API URL
-ask "URL de tu panel XUI.ONE (ej: http://tupanel.com/miapixui/):"
+echo -e "  ${DIM}── Panel XUI.ONE — URL de administración ──${NC}"
+echo -e "  ${DIM}   URL del panel admin, termina en /miapixui/ o similar${NC}"
+ask "XUI Admin URL (ej: http://tupanel.com/miapixui/):"
 read -r XUI_API_URL_INPUT
 XUI_API_URL_INPUT=$(echo "$XUI_API_URL_INPUT" | tr -d '[:space:]')
-[[ -z "$XUI_API_URL_INPUT" ]] && fatal "La URL del panel XUI es obligatoria."
+[[ -z "$XUI_API_URL_INPUT" ]] && fatal "La URL admin de XUI es obligatoria."
 
-# XUI API Key
-ask "API Key admin del panel XUI:"
+ask "XUI Admin API Key (key del administrador del panel):"
 read -r XUI_API_KEY_INPUT
-[[ -z "$XUI_API_KEY_INPUT" ]] && fatal "La API Key de XUI es obligatoria."
+[[ -z "$XUI_API_KEY_INPUT" ]] && fatal "La API Key admin de XUI es obligatoria."
 
-# XUI Reseller URL — default a la misma URL del panel
-XUI_RESELLER_URL_INPUT="$XUI_API_URL_INPUT"
+echo ""
+echo -e "  ${DIM}── Panel XUI.ONE — URL de revendedores ──${NC}"
+echo -e "  ${DIM}   URL específica para la API de revendedores, suele tener puerto distinto${NC}"
+ask "XUI Reseller URL (Enter = misma que admin, ej: http://tupanel.com:80/resselerapi/):"
+read -r XUI_RESELLER_URL_INPUT
+XUI_RESELLER_URL_INPUT=$(echo "$XUI_RESELLER_URL_INPUT" | tr -d '[:space:]')
+[[ -z "$XUI_RESELLER_URL_INPUT" ]] && XUI_RESELLER_URL_INPUT="$XUI_API_URL_INPUT"
 
 echo ""
 echo -e "  ${DIM}── Pasarelas de pago (Enter para dejar comentadas, configurar luego) ──${NC}"
@@ -255,11 +260,15 @@ DB_NAME=iptv_manager
 DB_USER=iptv_user
 DB_PASS=${DB_PASS}
 
-# ── Panel XUI.ONE ──────────────────────────────────────────────────────────
+# ── Panel XUI.ONE — Administración ────────────────────────────────────────
+# URL y key del administrador del panel (acceso global)
 XUI_API_URL=${XUI_API_URL_INPUT}
 XUI_API_KEY=${XUI_API_KEY_INPUT}
 XUI_USERNAME=
 XUI_PASSWORD=
+
+# ── Panel XUI.ONE — Revendedor ─────────────────────────────────────────────
+# URL específica para la API de revendedores (suele tener puerto distinto)
 XUI_RESELLER_API_URL=${XUI_RESELLER_URL_INPUT}
 XUI_DEFAULT_PACKAGE_ID=1
 XUI_DEFAULT_MAX_CONNECTIONS=1

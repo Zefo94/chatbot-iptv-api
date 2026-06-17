@@ -196,16 +196,21 @@ else
     USE_DOMAIN=false
 fi
 
-ask "URL del panel XUI.ONE (ej: http://tupanel.com/miapixui/):"
+echo -e "  ${DIM}── Panel XUI.ONE — URL de administración ──${NC}"
+echo -e "  ${DIM}   Es la URL del panel admin, termina en /miapixui/ o similar${NC}"
+ask "XUI Admin URL (ej: http://tupanel.com/miapixui/):"
 read -r GLOBAL_XUI_URL
 GLOBAL_XUI_URL=$(echo "$GLOBAL_XUI_URL" | tr -d '[:space:]')
-[[ -z "$GLOBAL_XUI_URL" ]] && fatal "La URL del panel XUI es obligatoria."
+[[ -z "$GLOBAL_XUI_URL" ]] && fatal "La URL admin de XUI es obligatoria."
 
-ask "API Key admin del panel XUI:"
+ask "XUI Admin API Key (la key del administrador del panel):"
 read -r GLOBAL_XUI_APIKEY
-[[ -z "$GLOBAL_XUI_APIKEY" ]] && fatal "La API Key de XUI es obligatoria."
+[[ -z "$GLOBAL_XUI_APIKEY" ]] && fatal "La API Key admin de XUI es obligatoria."
 
-ask "URL API revendedores XUI (Enter = misma URL del panel):"
+echo ""
+echo -e "  ${DIM}── Panel XUI.ONE — URL de revendedores ──${NC}"
+echo -e "  ${DIM}   Es la URL específica para la API de revendedores, suele tener puerto distinto${NC}"
+ask "XUI Reseller URL (Enter = misma que admin, ej: http://tupanel.com:80/resselerapi/):"
 read -r GLOBAL_XUI_RESELLER_URL
 GLOBAL_XUI_RESELLER_URL=$(echo "$GLOBAL_XUI_RESELLER_URL" | tr -d '[:space:]')
 [[ -z "$GLOBAL_XUI_RESELLER_URL" ]] && GLOBAL_XUI_RESELLER_URL="$GLOBAL_XUI_URL"
@@ -295,7 +300,9 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
         FULL_DOMAIN="$SERVER_IP"
     fi
 
-    ask "API Key del revendedor en XUI (xui_api_key del reseller en el panel):"
+    echo -e "  ${DIM}XUI Reseller API Key — la key asignada a ESTE revendedor en el panel XUI${NC}"
+    echo -e "  ${DIM}(distinta a la key admin, es la key específica de ${SLUG} en XUI)${NC}"
+    ask "XUI Reseller API Key de '${SLUG}':"
     read -r XUI_RESELLER_APIKEY
 
     R_DATA["${i}_slug"]="$SLUG"
@@ -451,11 +458,15 @@ DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASS=${DB_PASS}
 
-# ── Panel XUI.ONE ──────────────────────────────────────────────────────────
+# ── Panel XUI.ONE — Administración ────────────────────────────────────────
+# URL y key del administrador del panel (acceso global)
 XUI_API_URL=${GLOBAL_XUI_URL}
 XUI_API_KEY=${GLOBAL_XUI_APIKEY}
 XUI_USERNAME=
 XUI_PASSWORD=
+
+# ── Panel XUI.ONE — Revendedor ─────────────────────────────────────────────
+# URL y key específica de este revendedor (acceso propio del reseller)
 XUI_RESELLER_API_URL=${GLOBAL_XUI_RESELLER_URL}
 XUI_RESELLER_API_KEY=${XUI_RESELLER_APIKEY}
 XUI_DEFAULT_PACKAGE_ID=1
