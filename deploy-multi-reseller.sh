@@ -43,6 +43,19 @@ install_if_missing() {
     apt-get install -y "$1" -qq && info "$1 instalado"
 }
 
+# Liberar locks de dpkg/apt antes de cualquier instalación
+info "Verificando locks de dpkg..."
+systemctl stop unattended-upgrades 2>/dev/null || true
+rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
+dpkg --configure -a 2>/dev/null || true
+
+for i in $(seq 1 30); do
+    fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break
+    [[ $i -eq 30 ]] && fatal "dpkg sigue bloqueado tras 30 intentos — reinicia el servidor e intenta de nuevo"
+    warn "dpkg ocupado, esperando... ($i/30)"
+    sleep 5
+done
+
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     curl git unzip openssl software-properties-common \
