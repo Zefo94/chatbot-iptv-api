@@ -356,6 +356,19 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
     echo ""
     echo -e "${BOLD}${CYAN}  ── Revendedor: ${YELLOW}${SLUG}${NC}"
 
+    # Limpiar configs de Nginx huérfanos de intentos anteriores fallidos
+    # (config existe pero el directorio con el código no)
+    for ORPHAN_CONF in /etc/nginx/sites-enabled/chatbot-* /etc/nginx/sites-available/chatbot-*; do
+        [[ -f "$ORPHAN_CONF" ]] || continue
+        ORPHAN_ROOT=$(grep -oP 'root\s+\K[^;]+' "$ORPHAN_CONF" 2>/dev/null | head -1 | tr -d ' ')
+        ORPHAN_DIR=$(dirname "$ORPHAN_ROOT")
+        if [[ -n "$ORPHAN_DIR" ]] && [[ ! -d "$ORPHAN_DIR" ]]; then
+            ORPHAN_NAME=$(basename "$ORPHAN_CONF")
+            warn "Config huérfano encontrado (sin directorio): $ORPHAN_NAME — eliminando"
+            rm -f "/etc/nginx/sites-enabled/${ORPHAN_NAME}" "/etc/nginx/sites-available/${ORPHAN_NAME}"
+        fi
+    done
+
     # Clonar / actualizar
     step "Clonando código..."
     if [[ -d "$APP_DIR/.git" ]]; then
