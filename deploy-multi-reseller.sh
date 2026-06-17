@@ -185,17 +185,6 @@ SERVER_IP=$(curl -s -m 5 https://ifconfig.me 2>/dev/null \
 SERVER_IP=$(echo "$SERVER_IP" | tr -d '[:space:]')
 info "IP detectada: $SERVER_IP"
 
-ask "Dominio base (Enter para usar IP, ej: miservidor.com):"
-read -r DOMAIN_BASE_INPUT
-DOMAIN_BASE_INPUT=$(echo "$DOMAIN_BASE_INPUT" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-if [[ -n "$DOMAIN_BASE_INPUT" ]]; then
-    DOMAIN_BASE="$DOMAIN_BASE_INPUT"
-    USE_DOMAIN=true
-else
-    DOMAIN_BASE="$SERVER_IP"
-    USE_DOMAIN=false
-fi
-
 echo -e "  ${DIM}── Panel XUI.ONE — URL de administración ──${NC}"
 echo -e "  ${DIM}   Es la URL del panel admin, termina en /miapixui/ o similar${NC}"
 ask "XUI Admin URL (ej: http://tupanel.com/miapixui/):"
@@ -286,18 +275,16 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
     SLUG=$(echo "$SLUG" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
     [[ -z "$SLUG" ]] && SLUG="reseller${i}"
 
-    if [[ "$USE_DOMAIN" == "true" ]]; then
-        ask "Subdominio (Enter = api-${SLUG}.${DOMAIN_BASE}):"
-        read -r SUBDOMAIN
-        if [[ -z "$SUBDOMAIN" ]]; then
-            FULL_DOMAIN="api-${SLUG}.${DOMAIN_BASE}"
-        elif [[ "$SUBDOMAIN" == *"."* ]]; then
-            FULL_DOMAIN="$SUBDOMAIN"
-        else
-            FULL_DOMAIN="${SUBDOMAIN}.${DOMAIN_BASE}"
-        fi
+    echo -e "  ${DIM}Dominio completo para la API de este revendedor${NC}"
+    ask "Dominio (Enter para usar IP ${SERVER_IP}, ej: titipanel.serviticket.space):"
+    read -r DOMAIN_INPUT
+    DOMAIN_INPUT=$(echo "$DOMAIN_INPUT" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    if [[ -n "$DOMAIN_INPUT" ]]; then
+        FULL_DOMAIN="$DOMAIN_INPUT"
+        USE_DOMAIN=true
     else
         FULL_DOMAIN="$SERVER_IP"
+        USE_DOMAIN=false
     fi
 
     echo -e "  ${DIM}XUI Reseller API Key — la key asignada a ESTE revendedor en el panel XUI${NC}"
@@ -307,6 +294,7 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
 
     R_DATA["${i}_slug"]="$SLUG"
     R_DATA["${i}_domain"]="$FULL_DOMAIN"
+    R_DATA["${i}_use_domain"]="$USE_DOMAIN"
     R_DATA["${i}_xui_reseller_apikey"]="${XUI_RESELLER_APIKEY:-}"
 
     echo -e "${GREEN}  ✓ Revendedor '$SLUG' registrado${NC}"
@@ -354,6 +342,7 @@ declare -a SUMMARY_DB_PASSES=()
 for ((i=1; i<=NUM_RESELLERS; i++)); do
     SLUG="${R_DATA["${i}_slug"]}"
     FULL_DOMAIN="${R_DATA["${i}_domain"]}"
+    USE_DOMAIN="${R_DATA["${i}_use_domain"]}"
     XUI_RESELLER_APIKEY="${R_DATA["${i}_xui_reseller_apikey"]:-}"
 
     APP_DIR="${BASE_DIR}/chatbot-${SLUG}"
@@ -588,7 +577,7 @@ NGINXCONF
         case "$SSL_CHOICE" in
             2)
                 if certbot --nginx -d "$FULL_DOMAIN" --non-interactive --agree-tos \
-                     -m "admin@${DOMAIN_BASE}" --redirect 2>/dev/null; then
+                     --register-unsafely-without-email --redirect 2>/dev/null; then
                     APP_URL="https://${FULL_DOMAIN}"
                     info "Let's Encrypt activo para $FULL_DOMAIN"
                 else
