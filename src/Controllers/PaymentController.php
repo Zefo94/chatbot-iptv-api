@@ -168,7 +168,7 @@ class PaymentController extends BaseController
                 } catch (Exception $creditEx) {
                     if (str_contains($creditEx->getMessage(), 'INSUFFICIENT_CREDITS')) {
                         LoggerService::logFile("crearPagoPayPal blocked: " . $creditEx->getMessage(), "warning");
-                        $this->error("No hay créditos disponibles para este paquete. Por favor contacta a tu proveedor.", 400);
+                        $this->error("No es posible generar tu enlace de pago. Por favor contacta a tu proveedor.", 400);
                     }
                     // Other errors (XUI unreachable) — log but don't block
                     LoggerService::logFile("Credit pre-check non-fatal: " . $creditEx->getMessage(), "warning");
