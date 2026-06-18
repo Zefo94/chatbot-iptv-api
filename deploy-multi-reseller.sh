@@ -370,8 +370,16 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
     done
 
     # Clonar / actualizar
+    # ── Detectar si ya existe una instalación funcional ──────────────────────
+    IS_UPDATE=false
+    if [[ -d "$APP_DIR/.git" ]] && [[ -f "$APP_DIR/.env" ]]; then
+        IS_UPDATE=true
+        warn "Instalación existente detectada para '$SLUG' — solo se actualizará el código"
+        info "El .env, la BD y las credenciales NO se modificarán"
+    fi
+
     step "Clonando código..."
-    if [[ -d "$APP_DIR/.git" ]]; then
+    if [[ "$IS_UPDATE" == "true" ]]; then
         cd "$APP_DIR"
         git pull -q origin "$BRANCH" || warn "git pull falló, usando código existente"
     else
@@ -385,7 +393,8 @@ for ((i=1; i<=NUM_RESELLERS; i++)); do
     fi
     git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 
-    # .env
+    # .env — solo en instalación nueva
+    if [[ "$IS_UPDATE" == "false" ]]; then
     step "Generando .env..."
 
     # Construir bloques de pasarelas de pago (comentados si vacíos)
@@ -493,19 +502,7 @@ ENVEOF
 
     chmod 600 "${APP_DIR}/.env"
 
-    # Composer
-    step "Instalando dependencias PHP..."
-    cd "$APP_DIR"
-    COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader -q
-
-    # Permisos
-    chown -R www-data:www-data "$APP_DIR"
-    find "$APP_DIR" -type f -exec chmod 644 {} \;
-    find "$APP_DIR" -type d -exec chmod 755 {} \;
-    chmod 600 "${APP_DIR}/.env"
-    [[ -d "${APP_DIR}/storage" ]] && chmod -R 775 "${APP_DIR}/storage"
-
-    # Base de datos
+    # Base de datos — solo en instalación nueva
     step "Creando base de datos..."
     mysql_cmd "DROP DATABASE IF EXISTS \`${DB_NAME}\`;" || true
     mysql_cmd "CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
@@ -514,6 +511,20 @@ ENVEOF
     mysql_cmd "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';"
     mysql_cmd "FLUSH PRIVILEGES;"
     [[ -f "${APP_DIR}/schema.sql" ]] && mysql_file "${DB_NAME}" "${APP_DIR}/schema.sql"
+
+    fi # fin bloque instalación nueva
+
+    # Composer — siempre (actualiza dependencias si el código cambió)
+    step "Instalando dependencias PHP..."
+    cd "$APP_DIR"
+    COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader -q
+
+    # Permisos — siempre
+    chown -R www-data:www-data "$APP_DIR"
+    find "$APP_DIR" -type f -exec chmod 644 {} \;
+    find "$APP_DIR" -type d -exec chmod 755 {} \;
+    chmod 600 "${APP_DIR}/.env"
+    [[ -d "${APP_DIR}/storage" ]] && chmod -R 775 "${APP_DIR}/storage"
 
     # Nginx vhost
     step "Configurando Nginx..."
@@ -606,6 +617,12 @@ NGINXCONF
                 info "Cloudflare SSL — el servidor escucha HTTP, Cloudflare provee HTTPS"
                 ;;
         esac
+    fi
+
+    # En update, leer credenciales del .env existente
+    if [[ "$IS_UPDATE" == "true" ]]; then
+        CHATBOT_API_KEY=$(grep "^CHATBOT_API_KEY=" "${APP_DIR}/.env" | cut -d= -f2)
+        DB_PASS=$(grep "^DB_PASS=" "${APP_DIR}/.env" | cut -d= -f2)
     fi
 
     SUMMARY_SLUGS+=("$SLUG")
