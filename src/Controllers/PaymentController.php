@@ -141,10 +141,15 @@ class PaymentController extends BaseController
             if ($monto <= 0.0 && !empty($input['package_id']) && !empty($input['revendedor_id'])) {
                 try {
                     $stmt = \App\Database\Connection::getInstance()
-                        ->prepare("SELECT precio FROM revendedor_precios WHERE revendedor_id = :rid AND package_id = :pid AND activo = 1 LIMIT 1");
+                        ->prepare("SELECT precio, moneda FROM revendedor_precios WHERE revendedor_id = :rid AND package_id = :pid AND activo = 1 LIMIT 1");
                     $stmt->execute([':rid' => (int)$input['revendedor_id'], ':pid' => (int)$input['package_id']]);
                     $row = $stmt->fetch();
-                    if ($row) $monto = (float)$row['precio'];
+                    if ($row) {
+                        $monto = (float)$row['precio'];
+                        if (!isset($input['currency']) && !empty($row['moneda'])) {
+                            $input['currency'] = $row['moneda'];
+                        }
+                    }
                 } catch (\Exception $e) { /* fall through */ }
             }
 
