@@ -130,7 +130,6 @@ CREATE TABLE IF NOT EXISTS `revendedor_precios` (
   `activo`        TINYINT(1) NOT NULL DEFAULT 1,
   `updated_at`    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY `uq_rev_pkg` (`revendedor_id`, `package_id`),
-  FOREIGN KEY (`revendedor_id`) REFERENCES `revendedores`(`id`) ON DELETE CASCADE,
   INDEX `idx_revendedor_id` (`revendedor_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

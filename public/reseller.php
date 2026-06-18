@@ -72,7 +72,6 @@ if (str_starts_with($uri, '/reseller/api/')) {
     $stmt->execute([':id' => $revId]);
     $rev   = $stmt->fetch();
     if (!$rev) { session_destroy(); $err('Revendedor no encontrado.', 401); }
-    $localRevId = (int)$rev['id']; // local PK — used as FK in revendedor_precios, ordenes, etc.
 
     if ($action === 'info') {
         $xui = new \App\Services\XuiService();
@@ -101,7 +100,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
 
         $misPrecios = [];
         $stmt = $db->prepare("SELECT * FROM `revendedor_precios` WHERE `revendedor_id` = :rid");
-        $stmt->execute([':rid' => $localRevId]);
+        $stmt->execute([':rid' => $revId]);
         foreach ($stmt->fetchAll() as $r) $misPrecios[(int)$r['package_id']] = $r;
 
         $result = array_map(function($pkg) use ($misPrecios) {
@@ -136,7 +135,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
             ON DUPLICATE KEY UPDATE
                 `precio` = VALUES(`precio`), `moneda` = VALUES(`moneda`),
                 `activo` = VALUES(`activo`), `updated_at` = CURRENT_TIMESTAMP
-        ")->execute([':rid' => $localRevId, ':pid' => $packageId, ':precio' => $precio, ':moneda' => $moneda, ':activo' => $activo ? 1 : 0]);
+        ")->execute([':rid' => $revId, ':pid' => $packageId, ':precio' => $precio, ':moneda' => $moneda, ':activo' => $activo ? 1 : 0]);
 
         $ok('Precio guardado.');
     }
@@ -160,7 +159,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
 
         // For GROUP BY local date: shift stored UTC to local time before extracting date
         // local_time = UTC - tzOffset minutes  →  DATE_SUB(created_at, INTERVAL :tz MINUTE)
-        $params = [':rid' => $localRevId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc, ':tz' => $tzOffset];
+        $params = [':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc, ':tz' => $tzOffset];
 
         // Resumen general
         $stmt = $db->prepare("
@@ -172,7 +171,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
               AND `estado` = 'completed'
               AND `created_at` BETWEEN :desde AND :hasta
         ");
-        $stmt->execute([':rid' => $localRevId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
+        $stmt->execute([':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
         $resumen = $stmt->fetch(\PDO::FETCH_ASSOC);
 
         // Ventas por día (agrupadas en hora local del navegador)
@@ -186,7 +185,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
             GROUP BY DATE(DATE_SUB(`created_at`, INTERVAL :tz2 MINUTE))
             ORDER BY fecha ASC
         ");
-        $stmt->execute([':rid' => $localRevId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc,
+        $stmt->execute([':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc,
                         ':tz' => $tzOffset, ':tz2' => $tzOffset]);
         $porDia = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
@@ -202,7 +201,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
             ORDER BY ordenes DESC
             LIMIT 6
         ");
-        $stmt->execute([':rid' => $localRevId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
+        $stmt->execute([':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
         $topPkgs = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
         // Nombres de paquetes desde XUI
@@ -235,7 +234,7 @@ if (str_starts_with($uri, '/reseller/api/')) {
             ORDER BY o.`created_at` DESC
             LIMIT 200
         ");
-        $stmt->execute([':rid' => $localRevId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
+        $stmt->execute([':rid' => $revId, ':desde' => $desdeUtc, ':hasta' => $hastaUtc]);
         $txs = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
         // Añadir nombre del paquete a cada transacción
