@@ -158,6 +158,23 @@ class PaymentController extends BaseController
                 $this->error("No se encontró precio configurado para este paquete.", 400);
             }
 
+            // Pre-flight: block payment generation if reseller has insufficient credits
+            if (!empty($input['revendedor_id']) && !empty($input['package_id'])) {
+                try {
+                    $this->paymentService->checkResellerCredits(
+                        (int)$input['revendedor_id'],
+                        (int)$input['package_id']
+                    );
+                } catch (Exception $creditEx) {
+                    if (str_contains($creditEx->getMessage(), 'INSUFFICIENT_CREDITS')) {
+                        LoggerService::logFile("crearPagoPayPal blocked: " . $creditEx->getMessage(), "warning");
+                        $this->error("No hay créditos disponibles para este paquete. Por favor contacta a tu proveedor.", 400);
+                    }
+                    // Other errors (XUI unreachable) — log but don't block
+                    LoggerService::logFile("Credit pre-check non-fatal: " . $creditEx->getMessage(), "warning");
+                }
+            }
+
             $revendedorId = !empty($input['revendedor_id']) ? (int)$input['revendedor_id'] : null;
             $pkgIdForOrder = isset($input['package_id']) ? (int)$input['package_id'] : null;
 

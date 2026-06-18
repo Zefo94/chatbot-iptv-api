@@ -379,10 +379,10 @@ class PaymentService
                 throw new Exception("Order reference {$orderId} does not exist in local database.");
             }
 
-            // 2. Idempotent check: if already completed, bypass to prevent double-renewal
-            if ($order['estado'] === 'completed') {
+            // 2. Idempotent check: bypass if already processed to prevent double-renewal
+            if (in_array($order['estado'], ['completed', 'payment_received'], true)) {
                 $db->rollBack();
-                LoggerService::logFile("Webhook warning: Order {$orderId} is already completed. Skipping renewal bypass.", "warning");
+                LoggerService::logFile("Webhook warning: Order {$orderId} is already in state '{$order['estado']}'. Skipping.", "warning");
                 return true;
             }
 
@@ -427,6 +427,7 @@ class PaymentService
             $creditosDeducidos = 0;
             $xuiUpdate         = [];
             $resellerApiKey    = null;
+            $renewalError      = null;
 
             if (!empty($order['revendedor_id'])) {
                 try {
@@ -457,65 +458,76 @@ class PaymentService
             }
             $isSamePackage = $currentPkgId !== null && $currentPkgId === (int)($order['package_id'] ?? 0);
 
-            if ($resellerApiKey && !empty($order['package_id']) && $isSamePackage) {
-                // Same-package: reseller API stacks exp_date from current expiry and preserves bouquets.
-                $xuiUpdate     = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
-                $usedResellerApi = true;
-                LoggerService::logFile("resolveRenewal: line {$lineId} renewed via reseller API (same-package).", "info");
-            } elseif ($resellerApiKey && !empty($order['package_id'])) {
-                // Cross-package two-step strategy:
-                // Step 1: admin API sets new package_id + exp_date = base (current expiry).
-                //         Bouquets reset by panel — expected.
-                //         After this, the line already has the new package_id.
-                // Step 2: reseller API same-package renewal (package already matches) →
-                //         stacks exp_date from base → final = base + package_duration ✅
-                //         + applies package bouquets correctly ✅
-                $baseFormatted = date('Y-m-d H:i:s', $baseTimestamp);
-                try {
-                    $this->xuiService->setPackageAndBaseExpAsAdmin($lineId, (int)$order['package_id'], $baseFormatted);
-                    LoggerService::logFile("resolveRenewal: cross-package step 1 — admin set pkg={$order['package_id']} exp_date={$baseFormatted}.", "info");
-                } catch (\Exception $e) {
-                    LoggerService::logFile("resolveRenewal: cross-package step 1 failed: " . $e->getMessage(), "warning");
+            // Attempt XUI renewal — wrapped so DB writes always happen even if XUI rejects
+            // (e.g. reseller ran out of credits between link generation and payment capture)
+            try {
+                if ($resellerApiKey && !empty($order['package_id']) && $isSamePackage) {
+                    // Same-package: reseller API stacks exp_date from current expiry and preserves bouquets.
+                    $xuiUpdate     = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
+                    $usedResellerApi = true;
+                    LoggerService::logFile("resolveRenewal: line {$lineId} renewed via reseller API (same-package).", "info");
+                } elseif ($resellerApiKey && !empty($order['package_id'])) {
+                    // Cross-package two-step strategy:
+                    // Step 1: admin API sets new package_id + exp_date = base (current expiry).
+                    // Step 2: reseller API same-package renewal → stacks exp_date + applies bouquets.
+                    $baseFormatted = date('Y-m-d H:i:s', $baseTimestamp);
+                    try {
+                        $this->xuiService->setPackageAndBaseExpAsAdmin($lineId, (int)$order['package_id'], $baseFormatted);
+                        LoggerService::logFile("resolveRenewal: cross-package step 1 — admin set pkg={$order['package_id']} exp_date={$baseFormatted}.", "info");
+                    } catch (\Exception $e) {
+                        LoggerService::logFile("resolveRenewal: cross-package step 1 failed: " . $e->getMessage(), "warning");
+                    }
+                    $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
+                    $usedResellerApi = true;
+                    LoggerService::logFile("resolveRenewal: cross-package step 2 — reseller API applied bouquets + stacked date from {$baseFormatted}.", "info");
+                } else {
+                    // No reseller key: admin API only (bouquets affected if package changes, but no alternative).
+                    LoggerService::logFile("resolveRenewal: admin API fallback for line {$lineId} (no reseller key).", "warning");
+                    $editPayload = ['exp_date' => $newExpirationFormatted];
+                    if (!empty($order['package_id'])) {
+                        $editPayload['package_id'] = (int)$order['package_id'];
+                    }
+                    $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
                 }
-                $xuiUpdate = $this->xuiService->renewLineAsReseller($lineId, (int)$order['package_id'], $resellerApiKey);
-                $usedResellerApi = true;
-                LoggerService::logFile("resolveRenewal: cross-package step 2 — reseller API applied bouquets + stacked date from {$baseFormatted}.", "info");
-            } else {
-                // No reseller key: admin API only (bouquets affected if package changes, but no alternative).
-                LoggerService::logFile("resolveRenewal: admin API fallback for line {$lineId} (no reseller key).", "warning");
-                $editPayload = ['exp_date' => $newExpirationFormatted];
-                if (!empty($order['package_id'])) {
-                    $editPayload['package_id'] = (int)$order['package_id'];
+
+                // Credits: reseller API auto-deducts; admin API (including cross-package path) needs manual deduction.
+                if (!$usedResellerApi && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
+                    try {
+                        $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
+                    } catch (Exception $creditEx) {
+                        LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']}: " . $creditEx->getMessage(), "warning");
+                    }
+                } elseif ($usedResellerApi && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
+                    // Credits were auto-deducted by XUI.ONE reseller API — just sync the local cache
+                    try {
+                        $userInfo = $this->xuiService->requestAsAdmin('get_user', ['id' => (int)$order['revendedor_id']]);
+                        $userData = isset($userInfo['data']) && is_array($userInfo['data']) ? $userInfo['data'] : $userInfo;
+                        $newBalance = (int)($userData['credits'] ?? 0);
+                        $db->prepare("UPDATE `revendedores` SET `creditos_cache` = :c WHERE `xui_user_id` = :id")
+                           ->execute([':c' => $newBalance, ':id' => (int)$order['revendedor_id']]);
+                        LoggerService::logFile("Credits auto-deducted by XUI.ONE reseller API. New balance synced: {$newBalance}", "info");
+                        $creditosDeducidos = -1; // sentinel: auto by XUI
+                    } catch (\Exception $e) {
+                        LoggerService::logFile("WARN: Could not sync reseller credit cache after reseller API renewal: " . $e->getMessage(), "warning");
+                    }
                 }
-                $xuiUpdate = $this->xuiService->editLineAsAdmin($lineId, $editPayload);
+
+                // 6. Activate line
+                $this->xuiService->enableLine($lineId);
+
+            } catch (Exception $xuiEx) {
+                // XUI rejected the renewal AFTER payment was already captured.
+                // Save the payment record but flag the order for manual intervention.
+                $renewalError = $xuiEx->getMessage();
+                LoggerService::logFile(
+                    "CRITICAL: Payment confirmed but XUI renewal FAILED for order {$orderId}. " .
+                    "Client was charged " . ($amountPaid > 0 ? $amountPaid : $order['monto']) . " via {$gateway}. " .
+                    "Manual intervention required. Error: {$renewalError}",
+                    "error"
+                );
             }
 
-            // Credits: reseller API auto-deducts; admin API (including cross-package path) needs manual deduction.
-            if (!$usedResellerApi && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
-                try {
-                    $creditosDeducidos = $this->deductResellerCredits((int)$order['revendedor_id'], (int)$order['package_id']);
-                } catch (Exception $creditEx) {
-                    LoggerService::logFile("WARN: Credit deduction failed for reseller {$order['revendedor_id']}: " . $creditEx->getMessage(), "warning");
-                }
-            } elseif ($usedResellerApi && !empty($order['revendedor_id']) && !empty($order['package_id'])) {
-                // Credits were auto-deducted by XUI.ONE reseller API — just sync the local cache
-                try {
-                    $userInfo = $this->xuiService->requestAsAdmin('get_user', ['id' => (int)$order['revendedor_id']]);
-                    $userData = isset($userInfo['data']) && is_array($userInfo['data']) ? $userInfo['data'] : $userInfo;
-                    $newBalance = (int)($userData['credits'] ?? 0);
-                    $db->prepare("UPDATE `revendedores` SET `creditos_cache` = :c WHERE `xui_user_id` = :id")
-                       ->execute([':c' => $newBalance, ':id' => (int)$order['revendedor_id']]);
-                    LoggerService::logFile("Credits auto-deducted by XUI.ONE reseller API. New balance synced: {$newBalance}", "info");
-                    $creditosDeducidos = -1; // sentinel: auto by XUI
-                } catch (\Exception $e) {
-                    LoggerService::logFile("WARN: Could not sync reseller credit cache after reseller API renewal: " . $e->getMessage(), "warning");
-                }
-            }
-
-            // 6. Activate line
-            $this->xuiService->enableLine($lineId);
-
-            // 7. Write payment transaction receipt in database
+            // 7. Write payment receipt (always — payment was already captured by gateway)
             $payStmt = $db->prepare("
                 INSERT INTO `pagos` (`order_id`, `line_id`, `monto`, `estado`, `metodo_pago`, `created_at`)
                 VALUES (:order_id, :line_id, :monto, 'approved', :gateway, NOW())
@@ -527,27 +539,43 @@ class PaymentService
                 ':gateway'  => $gateway
             ]);
 
-            // 8. Update Order status
-            $orderStmt = $db->prepare("UPDATE `ordenes` SET `estado` = 'completed' WHERE `id` = :id");
-            $orderStmt->execute([':id' => $order['id']]);
+            // 8. Update order state — 'payment_received' signals admin that manual renewal is needed
+            $finalEstado = $renewalError ? 'payment_received' : 'completed';
+            $orderStmt = $db->prepare("UPDATE `ordenes` SET `estado` = :estado WHERE `id` = :id");
+            $orderStmt->execute([':estado' => $finalEstado, ':id' => $order['id']]);
 
-            // 9. Update local Client state and sync new expiry date
-            $clientStmt = $db->prepare("
-                UPDATE `clientes`
-                SET `estado` = 'active', `fecha_vencimiento` = :expiry
-                WHERE `line_id` = :line_id
-            ");
-            $clientStmt->execute([
-                ':expiry'  => $newExpirationFormatted,
-                ':line_id' => $lineId
-            ]);
+            // 9. Update client state only when renewal actually succeeded
+            if (!$renewalError) {
+                $clientStmt = $db->prepare("
+                    UPDATE `clientes`
+                    SET `estado` = 'active', `fecha_vencimiento` = :expiry
+                    WHERE `line_id` = :line_id
+                ");
+                $clientStmt->execute([
+                    ':expiry'  => $newExpirationFormatted,
+                    ':line_id' => $lineId
+                ]);
+            }
 
             $db->commit();
+
+            if ($renewalError) {
+                LoggerService::logAction("PAYMENT_RECEIVED_RENEWAL_FAILED", [
+                    'order_id' => $orderId,
+                    'line_id'  => $lineId,
+                    'gateway'  => $gateway,
+                    'monto'    => $amountPaid > 0 ? $amountPaid : $order['monto'],
+                ], [
+                    'estado'  => 'payment_received',
+                    'error'   => $renewalError,
+                    'message' => 'Pago confirmado pero renovación XUI falló. Requiere intervención manual.',
+                ]);
+                return true; // Don't rethrow — gateway should receive 200 so it stops retrying
+            }
 
             $creditLog = $creditosDeducidos === -1 ? 'auto (reseller native)' : $creditosDeducidos;
             LoggerService::logFile("Successfully renewed Line ID: {$lineId} for {$daysToExtend} days. New expiry: {$newExpirationFormatted}. Credits deducted: {$creditLog}", "info");
 
-            // Audit action to Logs DB
             LoggerService::logAction("AUTOMATIC_LINE_RENEWAL", [
                 'order_id' => $orderId,
                 'line_id' => $lineId,
@@ -564,6 +592,51 @@ class PaymentService
             $db->rollBack();
             LoggerService::logFile("Critical failure resolving payment renewal for Order: {$orderId}. Details: " . $e->getMessage(), "error");
             throw $e;
+        }
+    }
+
+    /**
+     * Pre-flight: verify the reseller has enough XUI credits for the given package.
+     * Throws INSUFFICIENT_CREDITS if balance < cost. Silently passes when the package
+     * has no credit cost or the check cannot complete (XUI unreachable, etc.).
+     *
+     * @throws Exception with "INSUFFICIENT_CREDITS:" prefix when balance is too low
+     */
+    public function checkResellerCredits(int $revendedorId, int $packageId): void
+    {
+        try {
+            $resp = $this->xuiService->requestAsAdmin('get_package', ['id' => $packageId]);
+            $pkg  = isset($resp['data']) && is_array($resp['data']) ? $resp['data'] : $resp;
+            $cost = (int)($pkg['official_credits'] ?? 0);
+        } catch (\Exception $e) {
+            LoggerService::logFile("checkResellerCredits: could not fetch package {$packageId}: " . $e->getMessage(), "warning");
+            return; // Non-blocking — don't prevent payment when XUI is unreachable
+        }
+
+        if ($cost <= 0) return; // Package has no credit cost
+
+        $balance = null;
+        try {
+            $userInfo = $this->xuiService->requestAsAdmin('get_user', ['id' => $revendedorId]);
+            $userData = isset($userInfo['data']) && is_array($userInfo['data']) ? $userInfo['data'] : $userInfo;
+            $balance  = isset($userData['credits']) ? (int)$userData['credits'] : null;
+        } catch (\Exception $e) {
+            // Fall back to locally cached balance
+            LoggerService::logFile("checkResellerCredits: XUI unavailable, using local cache: " . $e->getMessage(), "warning");
+            try {
+                $db   = Connection::getInstance();
+                $stmt = $db->prepare("SELECT creditos_cache FROM revendedores WHERE xui_user_id = :id LIMIT 1");
+                $stmt->execute([':id' => $revendedorId]);
+                $row  = $stmt->fetch();
+                $balance = $row ? (int)$row['creditos_cache'] : null;
+            } catch (\Exception $e2) { /* ignore */ }
+        }
+
+        if ($balance !== null && $balance < $cost) {
+            throw new Exception(
+                "INSUFFICIENT_CREDITS: El revendedor (xui_id={$revendedorId}) necesita {$cost} créditos " .
+                "para el paquete {$packageId} pero solo tiene {$balance}."
+            );
         }
     }
 
