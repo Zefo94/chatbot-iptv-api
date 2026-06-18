@@ -695,6 +695,7 @@ for ((i=0; i<${#SUMMARY_SLUGS[@]}; i++)); do
     echo -e "${BOLD}${CYAN}  │${NC}  API (chatbot):      ${GREEN}${URL}${NC}"
     echo -e "${BOLD}${CYAN}  │${NC}  Dashboard admin:    ${GREEN}${URL}/dashboard.php${NC}"
     echo -e "${BOLD}${CYAN}  │${NC}  Panel revendedor:   ${GREEN}${URL}/reseller.php${NC}"
+    echo -e "${BOLD}${CYAN}  │${NC}  Webhook PayPal:     ${GREEN}${URL}/api/webhook-pago${NC}"
     echo -e "${BOLD}${CYAN}  │${NC}"
     echo -e "${BOLD}${CYAN}  │${NC}  ${BOLD}── Autenticación ─────────────────────────────────${NC}"
     echo -e "${BOLD}${CYAN}  │${NC}  API Key (X-API-Key): ${YELLOW}${KEY}${NC}"
