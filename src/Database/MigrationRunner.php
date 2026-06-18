@@ -82,7 +82,10 @@ class MigrationRunner
             fn(string $s): bool => $s !== ''
         );
 
-        $this->db->beginTransaction();
+        // NOTE: We do NOT use transactions here. DDL statements (ALTER TABLE,
+        // CREATE TABLE, DROP TABLE) in MySQL/MariaDB cause an implicit commit,
+        // which would invalidate the transaction and make commit()/rollBack()
+        // throw "There is no active transaction".
         try {
             foreach ($statements as $statement) {
                 try {
@@ -102,13 +105,11 @@ class MigrationRunner
                 }
             }
 
+            // INSERT IGNORE handles concurrent requests that race to apply the same migration
             $this->db->prepare(
-                "INSERT INTO db_migrations (filename) VALUES (?)"
+                "INSERT IGNORE INTO db_migrations (filename) VALUES (?)"
             )->execute([$filename]);
-
-            $this->db->commit();
         } catch (\Throwable $e) {
-            $this->db->rollBack();
             throw new \RuntimeException(
                 "Migration '{$filename}' failed: " . $e->getMessage()
             );
