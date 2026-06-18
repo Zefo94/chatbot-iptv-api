@@ -323,11 +323,21 @@ class ResellerController extends BaseController
         }
 
         try {
-            $reseller = $this->loadResellerOrFail((int)$input['revendedor_id']);
-            $hash = password_hash($password, PASSWORD_BCRYPT);
+            // Look up by local PK directly — the dashboard always sends local_id.
+            // Do NOT use loadResellerOrFail (which checks xui_user_id first and can
+            // return the wrong row when local_id happens to equal another reseller's xui_user_id).
+            $localId = (int)$input['revendedor_id'];
             $db = Connection::getInstance();
+            $stmt = $db->prepare("SELECT * FROM `revendedores` WHERE `id` = :id LIMIT 1");
+            $stmt->execute([':id' => $localId]);
+            $reseller = $stmt->fetch();
+            if (!$reseller) {
+                $this->error("Revendedor con id {$localId} no encontrado.", 404);
+            }
+
+            $hash = password_hash($password, PASSWORD_BCRYPT);
             $db->prepare("UPDATE `revendedores` SET `panel_password` = :p WHERE `id` = :id")
-               ->execute([':p' => $hash, ':id' => (int)$reseller['id']]);
+               ->execute([':p' => $hash, ':id' => $localId]);
 
             LoggerService::logAction("SET_RESELLER_PASSWORD", ['revendedor_id' => $input['revendedor_id']], ['xui_username' => $reseller['xui_username']]);
             $this->success("Contraseña actualizada.", ['xui_username' => $reseller['xui_username']]);

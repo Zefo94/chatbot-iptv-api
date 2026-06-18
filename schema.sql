@@ -70,6 +70,7 @@ CREATE TABLE `revendedores` (
   `xui_user_id` INT NOT NULL UNIQUE COMMENT 'XUI.ONE reseller user ID',
   `xui_username` VARCHAR(100) NOT NULL,
   `xui_api_key` VARCHAR(255) NOT NULL,
+  `panel_password` VARCHAR(255) NULL COMMENT 'bcrypt hash for reseller.php login',
   `creditos_cache` INT NOT NULL DEFAULT 0,
   `active` TINYINT(1) NOT NULL DEFAULT 1,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -118,6 +119,9 @@ CREATE TABLE IF NOT EXISTS `precios_paquetes` (
   `updated_at`   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX `idx_activo` (`activo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Migration: add panel_password to existing installs (safe to run repeatedly)
+ALTER TABLE `revendedores` ADD COLUMN IF NOT EXISTS `panel_password` VARCHAR(255) NULL COMMENT 'bcrypt hash for reseller.php login' AFTER `xui_api_key`;
 
 -- Insert dynamic seed configurations/examples for structure verification
 INSERT INTO `logs` (`accion`, `request_json`, `response_json`) VALUES
