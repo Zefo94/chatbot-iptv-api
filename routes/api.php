@@ -35,6 +35,7 @@ return [
         '/api/historial-recargas' => ['App\Controllers\ResellerController', 'historial'],
         '/api/eliminar-revendedor'=> ['App\Controllers\ResellerController', 'eliminar'],
         '/api/set-reseller-password' => ['App\Controllers\ResellerController', 'setPassword'],
+        '/api/editar-revendedor'     => ['App\Controllers\ResellerController', 'editar'],
     ],
     'GET' => [
         '/api/info'            => ['App\Controllers\ServerInfoController', 'info'],

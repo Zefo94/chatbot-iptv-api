@@ -414,6 +414,7 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
               <button class="btn-sm-info sync-btn" data-local-id="${r.local_id}">Sincronizar</button>
               <button class="btn-sm-info recharge-toggle" data-local-id="${r.local_id}">Recargar</button>
               <button class="btn-sm-info passwd-toggle" data-local-id="${r.local_id}">Contraseña</button>
+              <button class="btn-sm-info edit-toggle" data-local-id="${r.local_id}" data-nombre="${escAttr(r.nombre)}" data-telefono="${escAttr(r.telefono||'')}" data-xui-user-id="${r.xui_user_id}" data-xui-username="${escAttr(r.xui_username)}">Editar</button>
               <button class="btn-sm-danger delete-btn" data-local-id="${r.local_id}" data-name="${esc(r.nombre)}">Eliminar</button>
             </div>
           </td>
@@ -436,6 +437,19 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
               <input type="text" class="recharge-nota" placeholder="Nota (ej: Pago USDT)" style="flex:1;min-width:160px">
               <button class="btn btn-primary btn-sm do-recharge" data-local-id="${r.local_id}" style="white-space:nowrap">${ICON.send} Confirmar</button>
               <span class="recharge-msg" style="font-size:13px"></span>
+            </div>
+          </td>
+        </tr>
+        <tr class="recharge-row" id="edit-${r.local_id}" style="display:none">
+          <td colspan="5">
+            <div class="recharge-inner" style="flex-wrap:wrap;gap:8px 12px">
+              <input type="text" class="edit-nombre" placeholder="Nombre" style="width:160px">
+              <input type="text" class="edit-telefono" placeholder="Teléfono" style="width:120px">
+              <input type="number" class="edit-xui-id" placeholder="XUI User ID" style="width:110px">
+              <input type="text" class="edit-username" placeholder="XUI Username" style="width:140px">
+              <input type="text" class="edit-apikey" placeholder="XUI API Key (vacío = no cambiar)" style="width:260px">
+              <button class="btn btn-primary btn-sm do-edit" data-local-id="${r.local_id}" style="white-space:nowrap">Guardar</button>
+              <span class="edit-msg" style="font-size:13px"></span>
             </div>
           </td>
         </tr>`;
@@ -461,6 +475,10 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
         btn.addEventListener('click', () => doRecharge(btn.dataset.localId)));
       body.querySelectorAll('.do-passwd').forEach(btn =>
         btn.addEventListener('click', () => doSetPassword(btn.dataset.localId)));
+      body.querySelectorAll('.edit-toggle').forEach(btn =>
+        btn.addEventListener('click', () => toggleEdit(btn)));
+      body.querySelectorAll('.do-edit').forEach(btn =>
+        btn.addEventListener('click', () => doEditRevendedor(btn.dataset.localId)));
     } catch(e) {
       body.innerHTML = `<div style="padding:20px;color:var(--danger);font-size:14px">Error: ${esc(e.message)}</div>`;
     }
@@ -477,6 +495,48 @@ $catalogJson = json_encode($catalog, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSO
     if(!row) return;
     row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
     if(row.style.display === 'table-row') row.querySelector('.passwd-input').focus();
+  }
+
+  function toggleEdit(btn){
+    const localId = btn.dataset.localId;
+    const row = document.getElementById('edit-'+localId);
+    if(!row) return;
+    const opening = row.style.display !== 'table-row';
+    row.style.display = opening ? 'table-row' : 'none';
+    if(opening){
+      row.querySelector('.edit-nombre').value    = btn.dataset.nombre || '';
+      row.querySelector('.edit-telefono').value  = btn.dataset.telefono || '';
+      row.querySelector('.edit-xui-id').value    = btn.dataset.xuiUserId || '';
+      row.querySelector('.edit-username').value  = btn.dataset.xuiUsername || '';
+      row.querySelector('.edit-apikey').value    = '';
+      row.querySelector('.edit-nombre').focus();
+    }
+  }
+
+  async function doEditRevendedor(localId){
+    const row = document.getElementById('edit-'+localId);
+    const msg = row.querySelector('.edit-msg');
+    const btn = row.querySelector('.do-edit');
+    const nombre   = row.querySelector('.edit-nombre').value.trim();
+    const telefono = row.querySelector('.edit-telefono').value.trim();
+    const xuiId    = row.querySelector('.edit-xui-id').value.trim();
+    const username = row.querySelector('.edit-username').value.trim();
+    const apiKey   = row.querySelector('.edit-apikey').value.trim();
+    if(!nombre){ msg.style.color='var(--danger)'; msg.textContent='El nombre es requerido'; return; }
+    btn.disabled=true; btn.textContent='…'; msg.textContent='';
+    const payload = { revendedor_id: parseInt(localId), nombre, telefono };
+    if(xuiId)    payload.xui_user_id   = parseInt(xuiId);
+    if(username) payload.xui_username  = username;
+    if(apiKey)   payload.xui_api_key   = apiKey;
+    try {
+      await apiFetch('/api/editar-revendedor', payload);
+      msg.style.color='var(--accent)'; msg.textContent='✓ Actualizado';
+      setTimeout(()=>{ row.style.display='none'; msg.textContent=''; loadRevendedores(); }, 1500);
+    } catch(e) {
+      msg.style.color='var(--danger)'; msg.textContent='✗ '+e.message;
+    } finally {
+      btn.disabled=false; btn.textContent='Guardar';
+    }
   }
 
   async function doSetPassword(localId){

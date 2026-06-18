@@ -347,6 +347,59 @@ class ResellerController extends BaseController
         }
     }
 
+    public function editar(): void
+    {
+        $input = $this->getRequestData();
+        $this->validate($input, ['revendedor_id' => 'required|integer']);
+
+        $localId = (int)$input['revendedor_id'];
+        $db = Connection::getInstance();
+        $stmt = $db->prepare("SELECT * FROM `revendedores` WHERE `id` = :id LIMIT 1");
+        $stmt->execute([':id' => $localId]);
+        $reseller = $stmt->fetch();
+        if (!$reseller) {
+            $this->error("Revendedor con id {$localId} no encontrado.", 404);
+        }
+
+        $fields = [];
+        $params = [':id' => $localId];
+
+        if (isset($input['nombre']) && trim($input['nombre']) !== '') {
+            $fields[] = '`nombre` = :nombre';
+            $params[':nombre'] = trim($input['nombre']);
+        }
+        if (array_key_exists('telefono', $input)) {
+            $fields[] = '`telefono` = :telefono';
+            $params[':telefono'] = trim($input['telefono'] ?? '');
+        }
+        if (isset($input['xui_user_id']) && (int)$input['xui_user_id'] > 0) {
+            $fields[] = '`xui_user_id` = :xui_user_id';
+            $params[':xui_user_id'] = (int)$input['xui_user_id'];
+        }
+        if (isset($input['xui_username']) && trim($input['xui_username']) !== '') {
+            $fields[] = '`xui_username` = :xui_username';
+            $params[':xui_username'] = trim($input['xui_username']);
+        }
+        if (isset($input['xui_api_key']) && trim($input['xui_api_key']) !== '') {
+            $fields[] = '`xui_api_key` = :xui_api_key';
+            $params[':xui_api_key'] = trim($input['xui_api_key']);
+        }
+
+        if (empty($fields)) {
+            $this->error("No se enviaron campos para actualizar.", 400);
+        }
+
+        try {
+            $db->prepare("UPDATE `revendedores` SET " . implode(', ', $fields) . " WHERE `id` = :id")
+               ->execute($params);
+            LoggerService::logAction("EDITAR_REVENDEDOR", ['revendedor_id' => $localId], ['fields' => array_keys($fields)]);
+            $this->success("Revendedor actualizado.", ['local_id' => $localId]);
+        } catch (Exception $e) {
+            LoggerService::logFile("Error in editar-revendedor: " . $e->getMessage(), "error");
+            $this->error("Error al actualizar revendedor: " . $e->getMessage(), 500);
+        }
+    }
+
     public function eliminar(): void
     {
         $input = $this->getRequestData();
